@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Exam Login</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body class="centered">
+  <main class="card">
+    <div class="brand"><span class="dot" id="statusDot"></span><strong>Local Exam System</strong></div>
+    <h1 id="quizTitle">Checking for an active exam…</h1>
+    <p class="sub" id="quizMeta">Connecting to the exam server.</p>
+
+    <div class="notice error" id="error" hidden></div>
+
+    <div class="notice warn" id="rules">
+      <strong>Before you begin — read carefully</strong>
+      <ul>
+        <li>The exam opens in <strong>fullscreen</strong>. Leaving fullscreen submits your exam.</li>
+        <li>Switching tabs, minimizing, or clicking outside the window submits your exam.</li>
+        <li>Copy, paste, right-click and developer tools are disabled.</li>
+        <li>You get <strong>one attempt only</strong>. Contact your invigilator if you are locked out.</li>
+      </ul>
+    </div>
+
+    <form id="loginForm" autocomplete="off">
+      <div class="field">
+        <label for="studentId">Student ID / Roll Number</label>
+        <input type="text" id="studentId" name="studentId" required maxlength="40"
+               placeholder="e.g. CSE-001" autocapitalize="characters" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="name">Full Name</label>
+        <input type="text" id="name" name="name" required maxlength="80"
+               placeholder="e.g. John Doe" autocomplete="off" spellcheck="false">
+      </div>
+      <button type="submit" class="btn block" id="submitBtn" disabled>Start Exam</button>
+    </form>
+
+    <p class="meta-line">Invigilator? <a href="/admin">Open the admin console</a></p>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/login.js"></script>
+</body>
+</html>

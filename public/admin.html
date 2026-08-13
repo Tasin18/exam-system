@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Exam Admin Console</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body class="admin">
+
+  <!-- Gate -->
+  <div class="overlay" id="gate">
+    <div class="panel" style="text-align:left">
+      <div class="brand" style="display:flex;gap:11px;align-items:center;margin-bottom:6px">
+        <span style="width:11px;height:11px;border-radius:50%;background:#2f5fe0"></span>
+        <strong>Invigilator Access</strong>
+      </div>
+      <h2>Admin Console</h2>
+      <p class="sub" style="color:#5c6a7e;font-size:.9rem;margin:8px 0 22px">
+        Enter the administrator password shown in the server console window.
+      </p>
+      <div class="notice error" id="gateError" hidden></div>
+      <form id="gateForm">
+        <div class="field">
+          <label for="password">Administrator password</label>
+          <input type="password" id="password" autocomplete="current-password" required>
+        </div>
+        <button class="btn block" type="submit">Unlock Console</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Shell -->
+  <div id="shell" hidden>
+    <header class="top">
+      <div class="brand"><span class="dot" id="liveDot"></span> Exam Admin Console</div>
+      <nav>
+        <button data-view="monitor" class="active">Live Monitor</button>
+        <button data-view="quizzes">Quizzes</button>
+        <button data-view="results">Results</button>
+        <button data-view="network">Join Info</button>
+      </nav>
+      <div class="top-right">
+        <span id="liveText">connecting…</span>
+        <button class="btn secondary small" id="logout">Lock</button>
+      </div>
+    </header>
+
+    <div class="wrap">
+      <div class="notice error" id="globalError" hidden></div>
+
+      <!-- ============ LIVE MONITOR ============ -->
+      <section class="view" id="view-monitor">
+        <div class="panel">
+          <header>
+            <div>
+              <h2 id="monitorTitle">No quiz selected</h2>
+              <p class="hint" id="monitorHint">Select a quiz to monitor.</p>
+            </div>
+            <div class="row" style="flex:0 0 auto">
+              <select id="monitorQuiz" style="min-width:220px"></select>
+              <button class="btn" id="toggleActive">Activate</button>
+            </div>
+          </header>
+
+          <div class="stats">
+            <div class="stat accent"><div class="k">Online now</div><div class="v" id="statOnline">0</div></div>
+            <div class="stat"><div class="k">Not started</div><div class="v" id="statNotStarted">0</div></div>
+            <div class="stat accent"><div class="k">In progress</div><div class="v" id="statInProgress">0</div></div>
+            <div class="stat ok"><div class="k">Submitted</div><div class="v" id="statSubmitted">0</div></div>
+            <div class="stat danger"><div class="k">Terminated</div><div class="v" id="statTerminated">0</div></div>
+          </div>
+
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Student ID</th><th>Name</th><th>Status</th><th>Live</th>
+                  <th>Answered</th><th>Score</th><th>Flags</th><th>Started</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="monitorRows"></tbody>
+            </table>
+          </div>
+          <div class="empty" id="monitorEmpty" hidden>
+            No students yet. They appear here as soon as they log in.
+          </div>
+        </div>
+
+        <div class="panel">
+          <header>
+            <div>
+              <h2>Violation Feed</h2>
+              <p class="hint">Live anti-cheat alerts, newest first.</p>
+            </div>
+          </header>
+          <div class="feed" id="feed"></div>
+          <div class="empty" id="feedEmpty">No violations recorded.</div>
+        </div>
+      </section>
+
+      <!-- ============ QUIZZES ============ -->
+      <section class="view" id="view-quizzes" hidden>
+        <div class="panel">
+          <header>
+            <div><h2>Quizzes</h2><p class="hint">Only one quiz can be active at a time.</p></div>
+            <button class="btn" id="newQuiz">New Quiz</button>
+          </header>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>Title</th><th>Questions</th><th>Duration</th><th>Order</th>
+                    <th>Status</th><th></th></tr>
+              </thead>
+              <tbody id="quizRows"></tbody>
+            </table>
+          </div>
+          <div class="empty" id="quizEmpty" hidden>No quizzes yet. Create one to get started.</div>
+        </div>
+
+        <div class="panel" id="editorPanel" hidden>
+          <header>
+            <div><h2 id="editorTitle">New Quiz</h2>
+              <p class="hint">Mark the correct option with the radio button beside it.</p></div>
+            <button class="btn secondary small" id="closeEditor">Close</button>
+          </header>
+
+          <div class="notice error" id="editorError" hidden></div>
+
+          <div class="row">
+            <div class="field" style="flex:3 1 260px">
+              <label for="quizTitleInput">Exam title</label>
+              <input type="text" id="quizTitleInput" maxlength="120" placeholder="e.g. Data Structures — Unit 2">
+            </div>
+            <div class="field" style="flex:1 1 130px">
+              <label for="quizDuration">Duration (minutes)</label>
+              <input type="number" id="quizDuration" min="1" max="600" value="30">
+            </div>
+          </div>
+
+          <label class="check-row" for="quizShuffle">
+            <input type="checkbox" id="quizShuffle" checked>
+            <span>
+              <strong>Randomize question order per student</strong>
+              <em>Every student gets a different sequence, so neighbours never see the
+                same question at the same time. Turn this off only if your questions
+                must be answered in a fixed order.</em>
+            </span>
+          </label>
+
+          <div id="questionList"></div>
+
+          <div class="row" style="margin-top:14px">
+            <button class="btn secondary" id="addQuestion" style="flex:0 0 auto">+ Add Question</button>
+            <span style="flex:1"></span>
+            <button class="btn" id="saveQuiz" style="flex:0 0 auto">Save Quiz</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ RESULTS ============ -->
+      <section class="view" id="view-results" hidden>
+        <div class="panel">
+          <header>
+            <div><h2>Results</h2><p class="hint" id="resultsHint">Automated scoring, newest exam first.</p></div>
+            <div class="row" style="flex:0 0 auto">
+              <select id="resultsQuiz" style="min-width:220px"></select>
+              <button class="btn secondary" id="exportCsv">Export CSV</button>
+              <button class="btn secondary" id="exportAllPdf">All papers (PDF)</button>
+            </div>
+          </header>
+          <div class="stats">
+            <div class="stat"><div class="k">Attempts</div><div class="v" id="rStatCount">0</div></div>
+            <div class="stat accent"><div class="k">Average</div><div class="v" id="rStatAvg">—</div></div>
+            <div class="stat ok"><div class="k">Highest</div><div class="v" id="rStatMax">—</div></div>
+            <div class="stat warn"><div class="k">Lowest</div><div class="v" id="rStatMin">—</div></div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Student ID</th><th>Name</th><th>Status</th><th>Score</th><th>Correct</th>
+                    <th>Type</th><th>Flags</th><th>Submitted</th><th></th></tr>
+              </thead>
+              <tbody id="resultRows"></tbody>
+            </table>
+          </div>
+          <div class="empty" id="resultsEmpty" hidden>No attempts recorded for this quiz yet.</div>
+        </div>
+
+        <!-- Individual response sheet -->
+        <div class="panel" id="sheetPanel" hidden>
+          <header>
+            <div>
+              <h2 id="sheetTitle">Responses</h2>
+              <p class="hint" id="sheetHint"></p>
+            </div>
+            <div class="row" style="flex:0 0 auto">
+              <button class="btn" id="sheetPdf">View PDF</button>
+              <button class="btn secondary" id="sheetPdfSave">Save PDF</button>
+              <button class="btn secondary small" id="sheetClose">Close</button>
+            </div>
+          </header>
+
+          <div class="stats" id="sheetStats"></div>
+          <div class="notice error" id="sheetTerminated" hidden></div>
+          <div id="sheetBody"></div>
+        </div>
+      </section>
+
+      <!-- ============ NETWORK ============ -->
+      <section class="view" id="view-network" hidden>
+        <div class="panel">
+          <header><div><h2>Student Join Information</h2>
+            <p class="hint">Students must be on the same Wi-Fi network as this machine.</p></div></header>
+          <div class="notice warn" id="netWarning" hidden></div>
+          <div class="qr-box">
+            <img id="qrImage" alt="QR code linking to the student exam portal">
+            <div>
+              <label>Students open this address</label>
+              <div class="url" id="joinUrl">—</div>
+              <p class="hint" id="ifaceHint">—</p>
+              <button class="btn secondary small" id="copyUrl" style="margin-top:10px">Copy address</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>

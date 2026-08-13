@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Exam in Progress</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body class="exam">
+
+  <header class="exam-bar">
+    <div>
+      <div class="title" id="examTitle">Exam</div>
+      <div class="who" id="examWho">—</div>
+    </div>
+    <div class="right">
+      <div class="conn" id="conn"><span class="led"></span><span id="connText">Connected</span></div>
+      <div class="timer" id="timer">--:--</div>
+    </div>
+  </header>
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+
+  <main class="exam-body" id="questions" aria-live="polite"></main>
+
+  <div class="submit-bar" id="submitBar" hidden>
+    <span class="count" id="answeredCount">0 of 0 answered</span>
+    <button class="btn" id="finalSubmit">Submit Exam</button>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <!-- Pre-exam gate: fullscreen must be requested from a real user gesture. -->
+  <div class="overlay" id="gate">
+    <div class="panel">
+      <div class="icon">🔒</div>
+      <h2 id="gateTitle">Preparing your exam…</h2>
+      <p id="gateText">Loading questions from the exam server.</p>
+      <div class="notice warn" id="gateRules" hidden style="text-align:left;margin:20px 0 0">
+        <strong>This exam is monitored</strong>
+        <ul>
+          <li>Leaving fullscreen submits your exam immediately.</li>
+          <li>Switching tabs or windows submits your exam immediately.</li>
+          <li>Your answers save automatically as you go.</li>
+        </ul>
+      </div>
+      <button class="btn block" id="gateStart" style="margin-top:20px" hidden>
+        Enter Fullscreen &amp; Begin
+      </button>
+      <a class="btn secondary block" id="gateBack" href="/" style="margin-top:10px;text-decoration:none;display:none">
+        Back to login
+      </a>
+    </div>
+  </div>
+
+  <!-- Result / termination screen -->
+  <div class="overlay" id="result" hidden>
+    <div class="panel">
+      <div class="icon" id="resultIcon">✓</div>
+      <h2 id="resultTitle">Exam submitted</h2>
+      <p id="resultText">Your answers have been recorded.</p>
+      <div class="pending" id="resultPending" hidden>
+        Your score is <strong>not shown here</strong>.<br>
+        Results will be released by your examiner.
+      </div>
+      <div class="stamp" id="resultStamp" hidden></div>
+      <div class="reason" id="resultReason" hidden></div>
+      <p style="margin-top:22px;font-size:.84rem">You may now close this window.</p>
+    </div>
+  </div>
+
+  <!-- Minified build: 14 KB on the wire instead of 37 KB, identical API. On a
+       60-phone Wi-Fi radio that is the largest saving left after the images. -->
+  <script src="/socket.io/socket.io.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/lockdown.js"></script>
+  <script src="/js/exam.js"></script>
+</body>
+</html>
