@@ -68,7 +68,7 @@ ADMIN_PASSWORD=exam2026 PORT=8080 npm start
 | `npm start`             | Run the server (port 3000)                                |
 | `npm run start:80`      | Run on port 80 so students type just the IP - **use this for phones** |
 | `npm run netcheck`      | Diagnose "students cannot open the portal"                |
-| `npm test`              | 99 end-to-end tests (real HTTP + WebSockets + SQLite)     |
+| `npm test`              | 110 end-to-end tests (real HTTP + WebSockets + SQLite)     |
 | `npm run seed`          | Load a demo quiz and roster                               |
 | `npm run password`      | Print the saved admin password                            |
 | `npm run password -- X` | Set the admin password to `X` (restart to apply)          |
@@ -393,6 +393,7 @@ A blocked login returns exactly the specified message:
 | `POST`   | `/api/admin/quizzes`                    | Create quiz + questions (`image` per question as a data URI, `shuffleQuestions`) |
 | `GET`    | `/api/admin/quizzes/:id`                | Includes the answer key and each image inlined, so edits round-trip |
 | `PUT`    | `/api/admin/quizzes/:id`                | Update; 409 if students are mid-exam     |
+| `POST`   | `/api/admin/quizzes/:id/duplicate`      | Copy questions, key and images; optional `{title}`. Copy is always inactive |
 | `POST`   | `/api/admin/quizzes/:id/activate`       | `{active}`; exactly one active at a time |
 | `DELETE` | `/api/admin/quizzes/:id`                | Cascades to questions/attempts           |
 | `GET`    | `/api/admin/monitor/:quizId`            | Full roster + statuses + flags           |
@@ -425,7 +426,7 @@ A blocked login returns exactly the specified message:
 npm test
 ```
 
-99 tests against a real HTTP server, real WebSockets and a real SQLite database
+110 tests against a real HTTP server, real WebSockets and a real SQLite database
 - no mocks. Coverage includes: admin auth, quiz validation and CRUD, answer-key
 non-leakage, autosave merging into the final score, the 403 single-attempt
 block, retake reset, resume-without-extra-time, auto-termination, double-submit

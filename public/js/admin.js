@@ -295,6 +295,8 @@
           + (q.is_active ? 'ACTIVE' : 'inactive') + '</span></td>'
         + '<td class="actions">'
           + '<button class="btn small secondary" data-act="edit" data-id="' + q.quiz_id + '">Edit</button> '
+          + '<button class="btn small secondary" data-act="duplicate" data-id="' + q.quiz_id
+            + '">Duplicate</button> '
           + '<button class="btn small' + (q.is_active ? ' danger' : '') + '" data-act="toggle" data-id="'
             + q.quiz_id + '">' + (q.is_active ? 'Deactivate' : 'Activate') + '</button> '
           + '<button class="btn small danger" data-act="delete" data-id="' + q.quiz_id + '">Delete</button>'
@@ -316,6 +318,20 @@
       var quiz = state.quizzes.find(function (q) { return q.quiz_id === quizId; });
       api.post('/api/admin/quizzes/' + quizId + '/activate', { active: !quiz.is_active }, token)
         .then(function () { loadQuizzes(); refreshMonitor(); }).catch(guard);
+    }
+
+    if (act === 'duplicate') {
+      // Disabled while in flight: a double click would otherwise make two copies.
+      btn.disabled = true;
+      api.post('/api/admin/quizzes/' + quizId + '/duplicate', {}, token)
+        .then(function (res) {
+          loadQuizzes();
+          // Open the copy straight away — it is inactive and almost always about
+          // to be edited, and seeing the editor makes clear which quiz is which.
+          openEditor(res.quiz.quiz_id);
+        })
+        .catch(guard)
+        .then(function () { btn.disabled = false; });
     }
 
     if (act === 'delete') {

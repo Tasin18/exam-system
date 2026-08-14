@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { q, nowIso, mapQuiz, mapQuestion } = require('./db');
+const { db, q, nowIso, mapQuiz, mapQuestion } = require('./db');
 const svc = require('./service');
 const adminAuth = require('./admin-auth');
 const { renderAnswerSheets } = require('./pdf');
@@ -103,6 +103,23 @@ function validateQuestions(input) {
     const image = decodeImage(item.image, `Question ${index + 1}`);
     return { text, options, correct, position: index, image };
   });
+}
+
+/**
+ * Names a duplicate: "Midterm" -> "Midterm (Copy)", then "(Copy 2)", "(Copy 3)".
+ *
+ * Copying a copy strips the existing suffix first, so repeatedly duplicating
+ * gives "Midterm (Copy 3)" rather than "Midterm (Copy) (Copy) (Copy)". Titles
+ * are not unique in the schema; this is about keeping the admin list readable,
+ * not about enforcing anything.
+ */
+function copyTitle(original) {
+  const base = String(original).replace(/\s*\(Copy(?:\s+\d+)?\)\s*$/i, '').trim()
+    || 'Untitled quiz';
+  const taken = new Set(q.listQuizzes.all().map((row) => row.title));
+  let candidate = `${base} (Copy)`;
+  for (let n = 2; taken.has(candidate); n += 1) candidate = `${base} (Copy ${n})`;
+  return candidate;
 }
 
 /** Writes a validated question set, replacing whatever the quiz had. */
@@ -328,6 +345,58 @@ function buildRouter() {
     if (active) activateOnly(quizId);
 
     res.json({ quiz: mapQuiz(q.getQuiz.get(quizId)) });
+  }));
+
+  /**
+   * Duplicates a quiz: settings, questions, answer key and images.
+   *
+   * Two deliberate omissions:
+   *
+   *  - **The copy is always inactive**, whatever the original was. Only one quiz
+   *    can be active at a time, so copying an active exam and inheriting that
+   *    flag would knock the running exam offline mid-sitting. Activating stays a
+   *    separate, deliberate click.
+   *  - **Attempts and results are not copied.** The point of a duplicate is a
+   *    fresh sitting, and single-attempt enforcement is keyed on
+   *    (student_id, quiz_id) - so every student may sit the copy exactly once,
+   *    regardless of what they did on the original.
+   *
+   * An optional `title` in the body overrides the generated "(Copy)" name.
+   */
+  router.post('/admin/quizzes/:id/duplicate', adminAuth.requireAdmin, handle((req, res) => {
+    const quizId = Number(req.params.id);
+    const source = svc.requireQuiz(quizId);
+
+    const requested = String((req.body || {}).title || '').trim();
+    const title = requested || copyTitle(source.title);
+
+    const rows = q.questionsForCopy.all(quizId);
+
+    // One transaction: a failure part-way through must not leave a quiz holding
+    // half its questions, which would look like a complete exam in the list.
+    db.exec('BEGIN IMMEDIATE');
+    let newId;
+    try {
+      const info = q.createQuiz.run(
+        title, source.duration_minutes, 0, source.shuffle_questions ? 1 : 0, nowIso());
+      newId = Number(info.lastInsertRowid);
+      // Positions are renumbered from 1 so a source with gaps copies clean.
+      rows.forEach((row, index) => {
+        q.addQuestion.run(newId, row.question_text, row.options, row.correct_option,
+          index + 1, row.image_data, row.image_mime);
+      });
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+
+    res.status(201).json({
+      quiz: mapQuiz(q.getQuiz.get(newId)),
+      copiedFrom: quizId,
+      copiedQuestions: rows.length,
+      copiedImages: rows.filter((row) => row.image_data).length,
+    });
   }));
 
   router.post('/admin/quizzes/:id/activate', adminAuth.requireAdmin, handle((req, res) => {

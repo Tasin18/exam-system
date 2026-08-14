@@ -137,6 +137,11 @@ const q = {
       FROM questions WHERE quiz_id = ? ORDER BY position, question_id`),
   questionImage: db.prepare(
     'SELECT quiz_id, image_data, image_mime FROM questions WHERE question_id = ?'),
+  // Includes image_data, unlike questionsByQuiz: duplicating a quiz copies the
+  // blobs straight across. Server-side only — never hand these rows to JSON.
+  questionsForCopy: db.prepare(`
+    SELECT question_text, options, correct_option, position, image_data, image_mime
+      FROM questions WHERE quiz_id = ? ORDER BY position, question_id`),
   deleteQuestionsByQuiz: db.prepare('DELETE FROM questions WHERE quiz_id = ?'),
   countQuestions: db.prepare('SELECT COUNT(*) AS n FROM questions WHERE quiz_id = ?'),
 
