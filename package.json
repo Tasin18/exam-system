@@ -2,11 +2,13 @@
   "name": "local-wifi-exam-system",
   "version": "1.0.0",
   "private": true,
-  "description": "Lightweight, high-security LAN quiz platform with single-attempt enforcement and anti-cheat auto-submission.",
+  "description": "Lightweight, high-security quiz platform with single-attempt enforcement and anti-cheat auto-submission. Runs on a local Wi-Fi network or published to the internet.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "start:80": "node server.js --port 80",
+    "go-live": "node scripts/publish.js",
+    "start:env": "node --env-file=.env server.js",
     "netcheck": "node scripts/netcheck.js",
     "seed": "node scripts/seed.js",
     "password": "node scripts/password.js",
@@ -15,7 +17,7 @@
     "test": "node --test \"tests/**/*.test.js\""
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=23.4.0"
   },
   "dependencies": {
     "express": "^5.1.0",

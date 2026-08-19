@@ -1,0 +1,40 @@
+# Fly.io. Deploy with:  fly launch --no-deploy  then  fly deploy
+app = "exam-system"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DB_FILE = "/data/exam.db"
+  PORT = "3000"
+  # Set to your real hostname before the first real exam:
+  #   fly secrets set PUBLIC_URL=https://exam-system.fly.dev
+  # and the admin password, which must never live in this file:
+  #   fly secrets set ADMIN_PASSWORD=...
+
+[[mounts]]
+  source = "exam_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Never scale past one machine: the exam state and the SQLite file live in a
+  # single process. Auto-stop is off because a suspended machine would drop
+  # every live exam session mid-paper.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 400
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/api/health"

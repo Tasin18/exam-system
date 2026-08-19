@@ -4,33 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Exam Administrator Console</title>
+  <title>Teacher Panel</title>
   <link rel="stylesheet" href="/css/styles.css">
 </head>
-<body class="admin" data-role="admin">
+<body class="admin" data-role="teacher">
 
   <!-- Gate -->
   <div class="overlay" id="gate">
     <div class="panel" style="text-align:left">
       <div class="brand" style="display:flex;gap:11px;align-items:center;margin-bottom:6px">
         <span style="width:11px;height:11px;border-radius:50%;background:#2f5fe0"></span>
-        <strong>Administrator Access</strong>
+        <strong>Teacher Sign-in</strong>
       </div>
-      <h2>Admin Console</h2>
+      <h2>Teacher Panel</h2>
       <p class="sub" style="color:#5c6a7e;font-size:.9rem;margin:8px 0 22px">
-        Full control: every teacher's quizzes and results, teacher accounts, the
-        student roster and the join address.
+        Create your exams, watch them being sat, and read your results.
       </p>
       <div class="notice error" id="gateError" hidden></div>
       <form id="gateForm">
         <div class="field">
-          <label for="password">Administrator password</label>
+          <label for="username">Username</label>
+          <input type="text" id="username" autocomplete="username" required
+                 spellcheck="false" autocapitalize="none">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
           <input type="password" id="password" autocomplete="current-password" required>
         </div>
-        <button class="btn block" type="submit">Unlock Console</button>
+        <button class="btn block" type="submit">Sign In</button>
       </form>
       <p class="meta-line" style="margin-top:18px">
-        A teacher? <a href="/teacher">Open the teacher panel</a>
+        No account yet? Ask your administrator to create one for you.
       </p>
     </div>
   </div>
@@ -38,17 +42,14 @@
   <!-- Shell -->
   <div id="shell" hidden>
     <header class="top">
-      <div class="brand"><span class="dot" id="liveDot"></span> Administrator Console</div>
+      <div class="brand"><span class="dot" id="liveDot"></span> Teacher Panel</div>
       <nav>
         <button data-view="monitor" class="active">Live Monitor</button>
-        <button data-view="quizzes">Quizzes</button>
+        <button data-view="quizzes">My Quizzes</button>
         <button data-view="results">Results</button>
-        <button data-view="teachers">Teachers</button>
-        <button data-view="students">Students</button>
-        <button data-view="network">Join Info</button>
       </nav>
       <div class="top-right">
-        <span id="whoami" class="who">Administrator</span>
+        <span id="whoami" class="who">Signed in</span>
         <span id="liveText">connecting…</span>
         <button class="btn secondary small" id="logout">Lock</button>
       </div>
@@ -112,20 +113,22 @@
       <section class="view" id="view-quizzes" hidden>
         <div class="panel">
           <header>
-            <div><h2>Quizzes</h2><p class="hint">Every teacher's quizzes. Only one can be
-              active at a time, across the whole system.</p></div>
+            <div><h2>My Quizzes</h2><p class="hint">Only your own quizzes are listed. One
+              quiz at a time can be active across the whole system &mdash; activating yours
+              closes whatever was open before.</p></div>
             <button class="btn" id="newQuiz">New Quiz</button>
           </header>
           <div class="table-scroll">
             <table>
               <thead>
-                <tr><th>ID</th><th>Title</th><th>Owner</th><th>Questions</th><th>Duration</th>
-                    <th>Order</th><th>Status</th><th></th></tr>
+                <tr><th>ID</th><th>Title</th><th>Questions</th><th>Duration</th><th>Order</th>
+                    <th>Status</th><th></th></tr>
               </thead>
               <tbody id="quizRows"></tbody>
             </table>
           </div>
-          <div class="empty" id="quizEmpty" hidden>No quizzes yet. Create one to get started.</div>
+          <div class="empty" id="quizEmpty" hidden>You have not created a quiz yet.
+            Click New Quiz to build one.</div>
         </div>
 
         <div class="panel" id="editorPanel" hidden>
@@ -155,7 +158,8 @@
           <p class="hint" id="accessCodeHint">Leave the access code blank on a closed
             Wi-Fi network. When students join over the internet, set one and read it out
             at the start &mdash; the join link gets forwarded and screenshotted, and the
-            code is what stops a stranger sitting the exam.</p>
+            code is what stops a stranger sitting the exam. Ask your administrator for
+            the join address to give students.</p>
 
           <label class="check-row" for="quizShuffle">
             <input type="checkbox" id="quizShuffle" checked>
@@ -226,102 +230,13 @@
         </div>
       </section>
 
-      <!-- ============ TEACHERS (admin only) ============ -->
-      <section class="view" id="view-teachers" hidden>
-        <div class="panel">
-          <header>
-            <div><h2>Teacher Accounts</h2>
-              <p class="hint">Each teacher signs in at <code>/teacher</code> and sees only
-                the quizzes they created.</p></div>
-          </header>
-          <div class="notice error" id="teacherError" hidden></div>
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr><th>Name</th><th>Username</th><th>Quizzes</th><th>Status</th>
-                    <th>Last sign-in</th><th></th></tr>
-              </thead>
-              <tbody id="teacherRows"></tbody>
-            </table>
-          </div>
-          <div class="empty" id="teacherEmpty" hidden>
-            No teacher accounts yet. Create one below and give them the username and
-            password &mdash; they never need the administrator password.
-          </div>
-        </div>
 
-        <div class="panel">
-          <header><div><h2>Add a Teacher</h2>
-            <p class="hint">They can create and run their own exams straight away.</p></div>
-          </header>
-          <form id="teacherForm" autocomplete="off">
-            <div class="row">
-              <div class="field" style="flex:2 1 220px">
-                <label for="teacherName">Full name</label>
-                <input type="text" id="teacherName" maxlength="80" required
-                       placeholder="e.g. Ms. Rahman" autocomplete="off">
-              </div>
-              <div class="field" style="flex:1 1 180px">
-                <label for="teacherUsername">Username</label>
-                <input type="text" id="teacherUsername" maxlength="32" required
-                       placeholder="e.g. s.rahman" autocomplete="off" spellcheck="false">
-              </div>
-              <div class="field" style="flex:1 1 180px">
-                <label for="teacherPassword">Password</label>
-                <input type="text" id="teacherPassword" maxlength="120" required
-                       placeholder="give this to them" autocomplete="new-password">
-              </div>
-            </div>
-            <p class="hint">The password is stored hashed and cannot be read back
-              afterwards &mdash; note it down now, or set a new one later.</p>
-            <button class="btn" type="submit" style="margin-top:10px">Create Teacher</button>
-          </form>
-        </div>
-      </section>
 
-      <!-- ============ STUDENTS (admin only) ============ -->
-      <section class="view" id="view-students" hidden>
-        <div class="panel">
-          <header>
-            <div><h2>Student Roster</h2>
-              <p class="hint"><span id="studentCount">0</span> students have logged in at
-                least once. Removing one erases every attempt they have made, in every
-                teacher's quiz.</p></div>
-            <button class="btn secondary small" id="refreshStudents">Refresh</button>
-          </header>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th>Student ID</th><th>Name</th><th>First seen</th><th></th></tr></thead>
-              <tbody id="studentRows"></tbody>
-            </table>
-          </div>
-          <div class="empty" id="studentEmpty" hidden>No students on record yet.</div>
-        </div>
-      </section>
-
-      <!-- ============ NETWORK ============ -->
-      <section class="view" id="view-network" hidden>
-        <div class="panel">
-          <header><div><h2>Student Join Information</h2>
-            <p class="hint" id="joinModeHint">Checking how students can reach this exam&hellip;</p></div></header>
-          <div class="notice warn" id="netWarning" hidden></div>
-          <div class="qr-box">
-            <img id="qrImage" alt="QR code linking to the student exam portal">
-            <div>
-              <label>Students open this address</label>
-              <div class="url" id="joinUrl">—</div>
-              <p class="hint" id="ifaceHint">—</p>
-              <button class="btn secondary small" id="copyUrl" style="margin-top:10px">Copy address</button>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   </div>
 
   <script src="/socket.io/socket.io.min.js"></script>
   <script src="/js/api.js"></script>
-  <script src="/js/admin-extras.js"></script>
   <script src="/js/dashboard.js"></script>
 </body>
 </html>

@@ -383,12 +383,21 @@ test('CSV export rejects an unauthenticated request', async () => {
   assert.equal(badQuery.status, 401);
 });
 
-test('the network endpoint and QR image are served', async () => {
-  const net = await call('GET', '/api/network');
+test('join information is administrator-only', async () => {
+  // These describe how to reach the server and what to project on the wall.
+  // They belong to whoever runs the room, not to every teacher with an account.
+  const anon = await fetch(`${BASE}/api/network`);
+  assert.equal(anon.status, 401);
+  const anonQr = await fetch(`${BASE}/api/qr.png`);
+  assert.equal(anonQr.status, 401);
+});
+
+test('the network endpoint and QR image are served to the administrator', async () => {
+  const net = await call('GET', '/api/network', null, adminToken);
   assert.equal(net.status, 200);
   assert.match(net.data.url, /^http:\/\/[\d.]+:\d+$/);
 
-  const qr = await fetch(`${BASE}/api/qr.png`);
+  const qr = await fetch(`${BASE}/api/qr.png?adminToken=${adminToken}`);
   assert.equal(qr.status, 200);
   assert.equal(qr.headers.get('content-type'), 'image/png');
   assert.ok((await qr.arrayBuffer()).byteLength > 100);

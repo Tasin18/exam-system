@@ -366,6 +366,22 @@ body.admin { background: var(--surface-2); }
 .top nav button.active { background: rgba(255, 255, 255, .16); color: #fff; font-weight: 600; }
 .top .top-right { display: flex; align-items: center; gap: 12px; font-size: .8rem; }
 
+/* Who is signed in. Present on both dashboards, and the only thing on screen
+   that distinguishes the teacher panel from the admin console at a glance when
+   both are open in adjacent tabs. */
+.top .who {
+  font-weight: 600;
+  color: var(--text);
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .wrap { max-width: 1240px; margin: 0 auto; padding: 24px; }
 .panel {
   background: var(--surface);

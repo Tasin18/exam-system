@@ -77,6 +77,19 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_flags_lookup ON flags(quiz_id, student_id, flag_id);
 
+  -- Staff who can create and run their own exams. The administrator is not in
+  -- this table: there is exactly one of those, its password comes from the
+  -- environment or the settings store, and it is the account that creates these.
+  CREATE TABLE IF NOT EXISTS teachers (
+    teacher_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    display_name  TEXT    NOT NULL,
+    password_hash TEXT    NOT NULL,        -- scrypt: salt:key, never a plaintext
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT    NOT NULL,
+    last_login    TEXT
+  );
+
   -- Small key/value store for host settings that must survive a restart.
   CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -99,6 +112,14 @@ addColumn('questions', 'image_data', 'BLOB');
 addColumn('questions', 'image_mime', 'TEXT');
 addColumn('quizzes', 'shuffle_questions', 'INTEGER NOT NULL DEFAULT 1');
 addColumn('attempts', 'shuffle_seed', 'INTEGER');
+// Gate for a quiz published to the internet: without it, the join URL is the
+// only thing between a stranger and a seat in the exam.
+addColumn('quizzes', 'access_code', 'TEXT');
+// Which teacher owns this quiz. NULL means the administrator created it - which
+// is also what every quiz from before this column existed looks like, so those
+// stay visible to the admin and to nobody else, rather than being handed to
+// whichever teacher happens to log in first.
+addColumn('quizzes', 'owner_id', 'INTEGER REFERENCES teachers(teacher_id) ON DELETE SET NULL');
 
 const nowIso = () => new Date().toISOString();
 
@@ -125,6 +146,9 @@ const q = {
   deleteQuiz: db.prepare('DELETE FROM quizzes WHERE quiz_id = ?'),
   activeQuiz: db.prepare('SELECT * FROM quizzes WHERE is_active = 1 ORDER BY quiz_id DESC LIMIT 1'),
   deactivateAll: db.prepare('UPDATE quizzes SET is_active = 0'),
+  // Kept out of updateQuiz so the code survives every edit that does not
+  // deliberately change it - including an activate/deactivate toggle.
+  setAccessCode: db.prepare('UPDATE quizzes SET access_code = ? WHERE quiz_id = ?'),
 
   addQuestion: db.prepare(`
     INSERT INTO questions
@@ -135,8 +159,12 @@ const q = {
     SELECT question_id, quiz_id, question_text, options, correct_option, position,
            image_mime, (image_data IS NOT NULL) AS has_image
       FROM questions WHERE quiz_id = ? ORDER BY position, question_id`),
-  questionImage: db.prepare(
-    'SELECT quiz_id, image_data, image_mime FROM questions WHERE question_id = ?'),
+  // owner_id rides along so the image route can answer "may this teacher see
+  // it?" without a second query on the hot path for every image on the page.
+  questionImage: db.prepare(`
+    SELECT q.quiz_id, q.image_data, q.image_mime, z.owner_id
+      FROM questions q JOIN quizzes z ON z.quiz_id = q.quiz_id
+     WHERE q.question_id = ?`),
   // Includes image_data, unlike questionsByQuiz: duplicating a quiz copies the
   // blobs straight across. Server-side only — never hand these rows to JSON.
   questionsForCopy: db.prepare(`
@@ -170,6 +198,35 @@ const q = {
     'UPDATE attempts SET violations = violations + 1 WHERE attempt_id = ?'),
   deleteAttempt: db.prepare('DELETE FROM attempts WHERE student_id = ? AND quiz_id = ?'),
 
+  /* ---- Teachers ---- */
+  createTeacher: db.prepare(`
+    INSERT INTO teachers (username, display_name, password_hash, is_active, created_at)
+    VALUES (?, ?, ?, 1, ?)`),
+  teacherByUsername: db.prepare('SELECT * FROM teachers WHERE username = ?'),
+  teacherById: db.prepare('SELECT * FROM teachers WHERE teacher_id = ?'),
+  listTeachers: db.prepare(`
+    SELECT t.*, (SELECT COUNT(*) FROM quizzes WHERE owner_id = t.teacher_id) AS quiz_count
+      FROM teachers t ORDER BY t.display_name COLLATE NOCASE`),
+  updateTeacher: db.prepare(
+    'UPDATE teachers SET display_name = ?, is_active = ? WHERE teacher_id = ?'),
+  updateTeacherPassword: db.prepare(
+    'UPDATE teachers SET password_hash = ? WHERE teacher_id = ?'),
+  touchTeacherLogin: db.prepare('UPDATE teachers SET last_login = ? WHERE teacher_id = ?'),
+  deleteTeacher: db.prepare('DELETE FROM teachers WHERE teacher_id = ?'),
+
+  /* ---- Quiz ownership ---- */
+  setQuizOwner: db.prepare('UPDATE quizzes SET owner_id = ? WHERE quiz_id = ?'),
+  // Owner name comes along so the admin's quiz list can say who made each one.
+  // LEFT JOIN, because an admin-created quiz legitimately has no owner row.
+  listQuizzesWithOwner: db.prepare(`
+    SELECT q.*, t.display_name AS owner_name
+      FROM quizzes q LEFT JOIN teachers t ON t.teacher_id = q.owner_id
+     ORDER BY q.quiz_id DESC`),
+  listQuizzesByOwner: db.prepare(`
+    SELECT q.*, t.display_name AS owner_name
+      FROM quizzes q LEFT JOIN teachers t ON t.teacher_id = q.owner_id
+     WHERE q.owner_id = ? ORDER BY q.quiz_id DESC`),
+
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
   setSetting: db.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
@@ -188,16 +245,28 @@ const q = {
  * Row helpers — normalize SQLite ints/JSON into real JS shapes
  * ------------------------------------------------------------------ */
 
-function mapQuiz(row) {
+/**
+ * `includeSecret` is opt-in because this shape is returned on the public
+ * `/api/quiz/active` route as well as to the admin console. Serialising
+ * access_code by default would publish the code to exactly the people it exists
+ * to keep out, so callers must ask for it and only admin routes do.
+ */
+function mapQuiz(row, { includeSecret = false } = {}) {
   if (!row) return null;
-  return {
+  const code = String(row.access_code || '').trim();
+  const quiz = {
     quiz_id: row.quiz_id,
     title: row.title,
     duration_minutes: row.duration_minutes,
     is_active: !!row.is_active,
     shuffle_questions: row.shuffle_questions === undefined ? true : !!row.shuffle_questions,
+    requires_code: !!code,
+    owner_id: row.owner_id === undefined ? null : row.owner_id,
+    owner_name: row.owner_name || null,
     created_at: row.created_at,
   };
+  if (includeSecret) quiz.access_code = code || null;
+  return quiz;
 }
 
 function mapQuestion(row, { includeAnswer = false } = {}) {

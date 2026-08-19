@@ -1,9 +1,8 @@
 'use strict';
 
 const svc = require('./service');
-const adminAuth = require('./admin-auth');
-
-const ADMIN_ROOM = 'admins';
+const auth = require('./auth');
+const { q } = require('./db');
 // Must comfortably exceed the client heartbeat (20s) so a phone that briefly
 // sleeps its radio is not shown as offline.
 const HEARTBEAT_TIMEOUT_MS = 50_000;
@@ -11,12 +10,34 @@ const HEARTBEAT_TIMEOUT_MS = 50_000;
 /**
  * Wires Socket.io. Two kinds of client connect:
  *   - students, authenticated by their exam session token
- *   - admins,   authenticated by the dashboard token
- * Student sockets can never subscribe to admin events.
+ *   - staff,    authenticated by the dashboard token (administrator or teacher)
+ *
+ * Student sockets can never subscribe to staff events, and a teacher's socket
+ * only ever receives events for exams that teacher owns. The old code put every
+ * dashboard in one broadcast room, which was correct when the only dashboard
+ * was the administrator's - with teachers it would have delivered every
+ * school's live violation feed to everyone holding any staff account.
  */
 function attachRealtime(io) {
-  // Which quiz each admin socket is watching.
-  const watching = new Map(); // socketId -> quizId
+  // Staff sockets: socketId -> { session, quizId }
+  const staff = new Map();
+
+  /** May this staff session see events for this quiz? */
+  const canSee = (session, quizId) => {
+    if (!session) return false;
+    if (session.role === 'admin') return true;
+    const row = q.getQuiz.get(Number(quizId));
+    return !!row && row.owner_id === session.teacherId;
+  };
+
+  /** Emits to every staff socket entitled to see this quiz. */
+  const toStaff = (quizId, event, payload) => {
+    for (const [socketId, entry] of staff) {
+      if (!canSee(entry.session, quizId)) continue;
+      const socket = io.sockets.sockets.get(socketId);
+      if (socket) socket.emit(event, payload);
+    }
+  };
 
   const pushSnapshot = (quizId) => {
     let snapshot;
@@ -25,8 +46,9 @@ function attachRealtime(io) {
     } catch {
       return; // quiz was deleted
     }
-    for (const [socketId, watched] of watching) {
-      if (watched !== quizId) continue;
+    for (const [socketId, entry] of staff) {
+      if (entry.quizId !== Number(quizId)) continue;
+      if (!canSee(entry.session, quizId)) continue;
       const socket = io.sockets.sockets.get(socketId);
       if (socket) socket.emit('admin:snapshot', snapshot);
     }
@@ -107,27 +129,36 @@ function attachRealtime(io) {
     /* ---------------- Admin ---------------- */
 
     socket.on('admin:join', (payload = {}, ack) => {
-      if (!adminAuth.verify(payload.token)) {
-        if (typeof ack === 'function') ack({ ok: false, error: 'Administrator authentication required.' });
+      const session = auth.sessionOf(payload.token);
+      if (!session) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'Sign in to continue.' });
         return;
       }
-      role = 'admin';
-      socket.join(ADMIN_ROOM);
-      if (payload.quizId) watching.set(socket.id, Number(payload.quizId));
-      if (typeof ack === 'function') ack({ ok: true });
-      if (payload.quizId) pushSnapshot(Number(payload.quizId));
+      role = 'staff';
+      const quizId = payload.quizId && canSee(session, payload.quizId)
+        ? Number(payload.quizId) : null;
+      staff.set(socket.id, { session, quizId });
+      if (typeof ack === 'function') {
+        ack({ ok: true, role: session.role, name: session.name });
+      }
+      if (quizId !== null) pushSnapshot(quizId);
     });
 
     socket.on('admin:watch', (payload = {}) => {
-      if (role !== 'admin') return;
+      const entry = staff.get(socket.id);
+      if (!entry) return;
       const quizId = Number(payload.quizId);
       if (!Number.isInteger(quizId)) return;
-      watching.set(socket.id, quizId);
+      // Re-checked on every switch rather than trusted from the join: a teacher
+      // could otherwise select any quiz id from the browser console and watch
+      // another teacher's exam live.
+      if (!canSee(entry.session, quizId)) return;
+      entry.quizId = quizId;
       pushSnapshot(quizId);
     });
 
     socket.on('disconnect', () => {
-      watching.delete(socket.id);
+      staff.delete(socket.id);
       if (role === 'student') {
         const entry = svc.presence.get(examToken);
         const quizId = entry ? entry.quizId : null;
@@ -137,15 +168,15 @@ function attachRealtime(io) {
     });
   });
 
-  /* ---------------- Service bus -> admin dashboards ---------------- */
+  /* ---------------- Service bus -> staff dashboards ---------------- */
 
   svc.bus.on('flag', (event) => {
-    io.to(ADMIN_ROOM).emit('admin:flag', event);
+    toStaff(event.quizId, 'admin:flag', event);
     scheduleSnapshot(event.quizId);
   });
 
   svc.bus.on('attempt:finalized', (event) => {
-    io.to(ADMIN_ROOM).emit('admin:attempt', event);
+    toStaff(event.quizId, 'admin:attempt', event);
     scheduleSnapshot(event.quizId);
   });
 
@@ -158,7 +189,7 @@ function attachRealtime(io) {
     io.to(`student:${event.studentId}:${event.quizId}`).emit('session:invalid', {
       reason: 'Your attempt was reset by the administrator. Please log in again.',
     });
-    io.to(ADMIN_ROOM).emit('admin:reset', event);
+    toStaff(event.quizId, 'admin:reset', event);
     scheduleSnapshot(event.quizId);
   });
 

@@ -8,6 +8,8 @@
  */
 
 const { q, nowIso } = require('../src/db');
+const auth = require('../src/auth');
+const { INTERNET_MODE } = require('../src/origin');
 
 const QUIZ = {
   title: 'Demo Exam — General Knowledge',
@@ -59,6 +61,29 @@ const STUDENTS = [
   ['CSE-005', 'Elena Petrova'],
 ];
 
+/**
+ * A teacher account, so `/teacher` is usable straight after seeding.
+ *
+ * Only ever created on a LAN. On a public deployment a demo login with a
+ * published password is a door left standing open, and the administrator can
+ * create a real account in the console in a few seconds.
+ */
+function seedTeacher() {
+  if (INTERNET_MODE) {
+    console.log('  Skipping the demo teacher: this deployment is public. Create');
+    console.log('  real accounts in the admin console instead.');
+    return;
+  }
+  if (q.teacherByUsername.get('demo')) {
+    console.log('  Demo teacher already present (demo) - skipping.');
+    return;
+  }
+  auth.createTeacher({
+    username: 'demo', displayName: 'Demo Teacher', password: 'demo-password',
+  });
+  console.log('  Created teacher "demo" (password: demo-password) for /teacher.');
+}
+
 function main() {
   const existing = q.listQuizzes.all()
     .find((row) => row.title === QUIZ.title);
@@ -66,7 +91,10 @@ function main() {
   if (existing) {
     console.log(`  Demo quiz already present (quiz_id ${existing.quiz_id}) — skipping quiz.`);
   } else {
-    const info = q.createQuiz.run(QUIZ.title, QUIZ.durationMinutes, 0, nowIso());
+    // Five columns since shuffle_questions was added; this call still passed
+    // four, so seeding failed outright on a NOT NULL constraint.
+    const info = q.createQuiz.run(
+      QUIZ.title, QUIZ.durationMinutes, 0, 1, nowIso());
     const quizId = Number(info.lastInsertRowid);
     QUIZ.questions.forEach((item, index) => {
       q.addQuestion.run(quizId, item.text, JSON.stringify(item.options), item.correct, index);
@@ -78,8 +106,16 @@ function main() {
   for (const [id, name] of STUDENTS) {
     q.upsertStudent.run(id, name, nowIso());
   }
-  console.log(`  Roster ready: ${STUDENTS.length} students.`);
-  console.log('\n  Next: npm start  ->  open the admin console and activate the quiz.\n');
+  // Worth saying plainly: the live monitor lists the people sitting an exam, so
+  // these names appear there only once they actually log in.
+  console.log(`  Roster ready: ${STUDENTS.length} students `
+    + '(they show on the Live Monitor once they log in).');
+
+  seedTeacher();
+
+  console.log('\n  Next: npm start');
+  console.log('    /admin   - administrator: everything, plus teacher accounts');
+  console.log('    /teacher - teacher panel: sign in as  demo / demo-password\n');
 }
 
 main();

@@ -9,7 +9,7 @@
 </head>
 <body class="centered">
   <main class="card">
-    <div class="brand"><span class="dot" id="statusDot"></span><strong>Local Exam System</strong></div>
+    <div class="brand"><span class="dot" id="statusDot"></span><strong>Exam System</strong></div>
     <h1 id="quizTitle">Checking for an active exam…</h1>
     <p class="sub" id="quizMeta">Connecting to the exam server.</p>
 
@@ -20,6 +20,8 @@
       <ul>
         <li>The exam opens in <strong>fullscreen</strong>. Leaving fullscreen submits your exam.</li>
         <li>Switching tabs, minimizing, or clicking outside the window submits your exam.</li>
+        <li>On a phone, an incoming call or a notification you tap counts as leaving the
+          exam. Turn on <strong>Do Not Disturb</strong> before you start.</li>
         <li>Copy, paste, right-click and developer tools are disabled.</li>
         <li>You get <strong>one attempt only</strong>. Contact your invigilator if you are locked out.</li>
       </ul>
@@ -36,10 +38,16 @@
         <input type="text" id="name" name="name" required maxlength="80"
                placeholder="e.g. John Doe" autocomplete="off" spellcheck="false">
       </div>
+      <div class="field" id="codeField" hidden>
+        <label for="accessCode">Exam Access Code</label>
+        <input type="text" id="accessCode" name="accessCode" maxlength="24"
+               placeholder="Given by your invigilator" autocapitalize="characters"
+               spellcheck="false" autocomplete="off" inputmode="text">
+      </div>
       <button type="submit" class="btn block" id="submitBtn" disabled>Start Exam</button>
     </form>
 
-    <p class="meta-line">Invigilator? <a href="/admin">Open the admin console</a></p>
+    <p class="meta-line">Teacher? <a href="/teacher">Open the teacher panel</a> &middot; <a href="/admin">Administrator</a></p>
   </main>
 
   <script src="/js/api.js"></script>

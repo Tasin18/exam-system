@@ -14,6 +14,9 @@ const os = require('node:os');
 const net = require('node:net');
 const http = require('node:http');
 
+// Set when this exam is published to the internet rather than a local network.
+const PUBLIC_URL = String(process.env.PUBLIC_URL || '').trim().replace(/[/]+$/, '');
+
 const portArg = Number(process.argv[2]);
 const PORT = Number.isInteger(portArg) && portArg > 0
   ? portArg
@@ -69,11 +72,60 @@ function probeJson(path, host = '127.0.0.1') {
 /** Does the exam API actually answer? */
 const probeApi = (host) => probeJson('/api/quiz/active', host);
 
+/**
+ * Checks the published address end to end.
+ *
+ * Everything below this only proves the server answers on the local network,
+ * which tells you nothing about whether a student on mobile data can reach it.
+ * The one question that matters for a public deployment is whether the address
+ * on the QR code resolves, terminates TLS and arrives at this process - so ask
+ * it the same way a student's phone would.
+ */
+async function checkPublic(line) {
+  console.log(`\n${line}`);
+  console.log('  PUBLIC ADDRESS');
+  console.log(line);
+  console.log(`\n  Students open : ${PUBLIC_URL}`);
+
+  if (!PUBLIC_URL.startsWith('https://')) {
+    console.log('  WARNING       : this is plain http. Answers and the admin password');
+    console.log('                  cross the internet unencrypted.');
+  }
+
+  try {
+    const res = await fetch(`${PUBLIC_URL}/api/health`, {
+      signal: AbortSignal.timeout(8000),
+      headers: { 'cache-control': 'no-cache' },
+    });
+    const body = await res.json().catch(() => ({}));
+    const reachable = res.ok && body.ok;
+    console.log(`  Reachable     : ${reachable ? 'yes' : 'NO'}`);
+    if (reachable && body.mode !== 'internet') {
+      console.log('  MISMATCH      : the server that answered is NOT in internet mode.');
+      console.log('                  PUBLIC_URL is set in this shell but not in the');
+      console.log('                  environment the server was actually started with,');
+      console.log('                  so it is still advertising a local address.');
+    }
+    if (!reachable) {
+      console.log(`  HTTP status   : ${res.status}`);
+      console.log('  -> The address resolves but the exam server did not answer.');
+      console.log('     Check the tunnel or the host is still running.');
+    }
+  } catch (err) {
+    console.log('  Reachable     : NO');
+    console.log(`  Error         : ${err.message}`);
+    console.log('  -> Nothing answered there. Check the hostname is spelled correctly,');
+    console.log('     that DNS has propagated, and that the deployment is running.');
+  }
+}
+
 async function main() {
   const line = '='.repeat(64);
   console.log(`\n${line}`);
   console.log(`  NETWORK CHECK  (port ${PORT})`);
   console.log(line);
+
+  if (PUBLIC_URL) await checkPublic(line);
 
   const running = await probePort('127.0.0.1');
   console.log(`\n  Server running on port ${PORT}? ${running ? 'YES' : 'NO'}`);
@@ -134,6 +186,10 @@ async function main() {
   console.log(`\n${line}`);
   console.log('  IF A PHONE STILL CANNOT CONNECT');
   console.log(line);
+  if (PUBLIC_URL) {
+    console.log('\n  This exam is published at the address above, so the local addresses');
+    console.log('  listed here only matter for someone sitting in the same room.');
+  }
   console.log('\n  1. Phone on Wi-Fi, not mobile data, and on the SAME network.');
   console.log('  2. Type the address exactly - include http:// when a port is used.');
   console.log('  3. Scan the QR code instead of typing (it encodes the full URL).');

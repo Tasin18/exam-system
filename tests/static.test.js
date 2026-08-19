@@ -20,7 +20,7 @@ const { once } = require('node:events');
 const { server } = require('../server');
 const BASE = `http://127.0.0.1:${process.env.PORT}`;
 
-const ASSETS = ['/css/styles.css', '/js/api.js', '/js/exam.js', '/js/lockdown.js', '/js/admin.js'];
+const ASSETS = ['/css/styles.css', '/js/api.js', '/js/exam.js', '/js/lockdown.js', '/js/dashboard.js'];
 const PAGES = ['/', '/exam', '/admin'];
 
 async function head(path, headers = {}) {

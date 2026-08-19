@@ -11,6 +11,8 @@
   var metaEl = document.getElementById('quizMeta');
   var dot = document.getElementById('statusDot');
   var rules = document.getElementById('rules');
+  var codeField = document.getElementById('codeField');
+  var codeInput = document.getElementById('accessCode');
 
   var activeQuiz = null;
 
@@ -39,6 +41,14 @@
       }
       activeQuiz = data;
       rules.hidden = false;
+      // Asked for only when this quiz actually has a code, so a student sitting
+      // an exam on a closed network is never confronted with a box they cannot
+      // fill in. Never revealed on a later poll once it is showing, or a typed
+      // code would be wiped while the student is still reading it.
+      if (data.requiresCode && codeField.hidden) {
+        codeField.hidden = false;
+        codeInput.required = true;
+      }
       titleEl.textContent = data.title;
       metaEl.textContent = data.questionCount + ' question'
         + (data.questionCount === 1 ? '' : 's') + ' · ' + data.durationMinutes
@@ -61,8 +71,14 @@
 
     var studentId = idInput.value.trim();
     var name = nameInput.value.trim();
+    var code = codeInput.value.trim();
     if (!studentId || !name) {
       showError('Enter both your Student ID and your full name.');
+      return;
+    }
+    if (!codeField.hidden && !code) {
+      showError('Enter the access code your invigilator gave you.');
+      codeInput.focus();
       return;
     }
 
@@ -70,7 +86,7 @@
     submitBtn.textContent = 'Verifying…';
 
     api.post('/api/auth/login', {
-      studentId: studentId, name: name, quizId: activeQuiz.quizId,
+      studentId: studentId, name: name, quizId: activeQuiz.quizId, accessCode: code,
     }).then(function (data) {
       sessionStorage.setItem('exam.session', JSON.stringify({
         token: data.token,
@@ -83,6 +99,14 @@
       }));
       window.location.href = '/exam';
     }).catch(function (err) {
+      // The quiz may have gained a code since this page was loaded, or the poll
+      // may not have run yet. Reveal the box rather than leaving the student
+      // staring at an error with no way to act on it.
+      if (err.data && err.data.codeRequired) {
+        codeField.hidden = false;
+        codeInput.required = true;
+        codeInput.focus();
+      }
       showError(err.message);
       submitBtn.disabled = false;
       submitBtn.textContent = 'Start Exam';
@@ -91,6 +115,7 @@
 
   idInput.addEventListener('input', clearError);
   nameInput.addEventListener('input', clearError);
+  codeInput.addEventListener('input', clearError);
 
   loadActive();
 })();

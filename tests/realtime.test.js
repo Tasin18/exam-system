@@ -131,7 +131,7 @@ test('an admin socket is refused without the admin token', async () => {
   await once(socket, 'connect');
   const ack = await emitAck(socket, 'admin:join', { token: 'wrong' });
   assert.equal(ack.ok, false);
-  assert.match(ack.error, /authentication required/i);
+  assert.match(ack.error, /sign in/i);
 });
 
 test('an admin socket receives a live snapshot with the student shown online', async () => {

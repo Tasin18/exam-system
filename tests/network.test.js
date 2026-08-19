@@ -22,13 +22,26 @@ const { once } = require('node:events');
 const { server } = require('../server');
 const BASE = `http://127.0.0.1:${process.env.PORT}`;
 
+// The join panel describes how to reach this machine, so it is behind the
+// administrator password now rather than open to anyone who can load the page.
+let adminToken;
+
 test.before(async () => {
   if (!server.listening) await once(server, 'listening');
+  const res = await fetch(`${BASE}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: process.env.ADMIN_PASSWORD }),
+  });
+  adminToken = (await res.json()).token;
+  assert.ok(adminToken, 'the suite needs an administrator session');
 });
 test.after(() => { server.close(); });
 
 async function network() {
-  const res = await fetch(`${BASE}/api/network`);
+  const res = await fetch(`${BASE}/api/network`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
   assert.equal(res.status, 200);
   return res.json();
 }
@@ -83,7 +96,7 @@ test('the QR code encodes the current address and is never cached', async () => 
     const net = await network();
     assert.equal(net.host, '10.1.2.3');
 
-    const qr = await fetch(`${BASE}/api/qr.png`);
+    const qr = await fetch(`${BASE}/api/qr.png?adminToken=${adminToken}`);
     assert.equal(qr.status, 200);
     assert.equal(qr.headers.get('content-type'), 'image/png');
     // A cached QR would keep sending students to a dead address.

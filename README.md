@@ -1,8 +1,19 @@
-# Local WiFi Exam System
+# Exam System
 
-A lightweight, high-security quiz platform that runs entirely over a local Wi-Fi
-network with **no internet connection required**. Enforces single-attempt rules
-and automatic submission on focus loss or tab switching.
+A lightweight, high-security quiz platform. Enforces single-attempt rules and
+automatic submission on focus loss or tab switching.
+
+Two staff roles — a **teacher panel** at `/teacher` for running your own exams,
+and an **administrator console** at `/admin` with full control including teacher
+accounts.
+
+It runs in either of two modes, from the same code and the same database:
+
+- **Local Wi-Fi** (the default) - students join by typing this machine's address.
+  No internet connection required at all.
+- **Internet** - set `PUBLIC_URL` and students join from anywhere: mobile data,
+  home broadband, another building. See **[DEPLOY.md](DEPLOY.md)**, or run
+  `npm run go-live` to publish from this machine in about two minutes.
 
 ---
 
@@ -18,13 +29,15 @@ The console prints everything needed to run the exam:
 
 ```
 ==========================================================
-  LOCAL WIFI EXAM SYSTEM - running
+  EXAM SYSTEM - running (LOCAL WIFI mode)
 ==========================================================
   Student portal : http://192.168.0.100:3000
   Admin console  : http://192.168.0.100:3000/admin
+  Listening on   : 0.0.0.0:3000
+  Database       : ...\data\exam.db
+==========================================================
   Local (host)   : http://localhost:3000
   Interface      : Wi-Fi (192.168.0.100)
-  Database       : ...\data\exam.db
 ==========================================================
   ADMIN PASSWORD : <8 hex characters, printed here>   <-- use THIS
   (generated now and saved - it will stay the same next boot)
@@ -33,6 +46,14 @@ The console prints everything needed to run the exam:
   Students: scan to join
       [QR code]
 ```
+
+Three doors, all on the same address:
+
+| Path | Who | What they get |
+| --- | --- | --- |
+| `/` | students | The exam login |
+| `/teacher` | teachers | Their own quizzes, their live monitor, their results |
+| `/admin` | one administrator | All of the above for every teacher, plus teacher accounts, the student roster and the join address |
 
 > **The password is only in your own console output - this README shows a
 > placeholder, not a real credential.** Scroll up in the terminal where you ran
@@ -53,6 +74,13 @@ The console prints everything needed to run the exam:
 | `HOST`           | `0.0.0.0`          | Bind address (all interfaces = LAN-visible) |
 | `ADMIN_PASSWORD` | saved in DB        | Overrides the stored admin password         |
 | `DB_FILE`        | `data/exam.db`     | SQLite file (`:memory:` for throwaway runs) |
+| `PUBLIC_URL`     | unset              | Public address. **Setting it switches on internet mode** |
+| `TRUST_PROXY`    | `1` when public    | Proxy hops to trust for the client's real IP |
+| `FORCE_HTTPS`    | on when public+TLS | Redirect plaintext requests to https        |
+
+Everything below `DB_FILE` applies only to an internet deployment;
+[.env.example](.env.example) documents each one, and [DEPLOY.md](DEPLOY.md)
+explains what each mode changes.
 
 ```bash
 # Windows PowerShell
@@ -67,9 +95,11 @@ ADMIN_PASSWORD=exam2026 PORT=8080 npm start
 | ----------------------- | --------------------------------------------------------- |
 | `npm start`             | Run the server (port 3000)                                |
 | `npm run start:80`      | Run on port 80 so students type just the IP - **use this for phones** |
-| `npm run netcheck`      | Diagnose "students cannot open the portal"                |
-| `npm test`              | 110 end-to-end tests (real HTTP + WebSockets + SQLite)     |
-| `npm run seed`          | Load a demo quiz and roster                               |
+| `npm run go-live`       | Publish this machine to the internet through a Cloudflare tunnel |
+| `npm run start:env`     | Run with settings loaded from a local `.env` file         |
+| `npm run netcheck`      | Diagnose "students cannot open the portal" (checks the public address too) |
+| `npm test`              | 159 end-to-end tests (real HTTP + WebSockets + SQLite)     |
+| `npm run seed`          | Load a demo quiz, roster and a `demo` teacher account     |
 | `npm run password`      | Print the saved admin password                            |
 | `npm run password -- X` | Set the admin password to `X` (restart to apply)          |
 | `npm run optimize-images` | Report oversized question images (add `-- --apply` to shrink) |
@@ -101,24 +131,89 @@ bundler, no internet needed after `npm install`.
 ### Files
 
 ```
-server.js                 entry point: LAN binding, QR, static + API mount
+server.js                 entry point: binding, security headers, QR, static + API mount
+src/origin.js             where students are told to connect: LAN address or public URL
+src/ratelimit.js          per-client request limits and failed-login lockout
 src/db.js                 schema, prepared statements, row mappers
 src/service.js            all exam logic: login, grading, finalize, presence
 src/routes.js             REST endpoints (student + admin)
 src/realtime.js           Socket.io wiring, timer sweep, presence reaping
-src/admin-auth.js         admin password -> bearer token
+src/auth.js               roles, sessions, teacher accounts (scrypt-hashed)
 src/pdf.js                answer-sheet PDF rendering + font selection
 src/static.js             gzip-once asset cache, ETags, cache policy
 public/index.html   + js/login.js      student login + pre-exam check
 public/exam.html    + js/exam.js       exam portal
-public/admin.html   + js/admin.js      admin dashboard
+public/teacher.html                    teacher panel      (loads dashboard.js)
+public/admin.html                      admin console      (+ js/admin-extras.js)
+public/js/dashboard.js                 shared dashboard: monitor, editor, results
+public/js/admin-extras.js              admin-only panels: teachers, student roster
 public/js/lockdown.js                  anti-cheat enforcement
 scripts/seed.js  scripts/reset.js      utilities
+scripts/publish.js                     `npm run go-live` - tunnel + server
+Dockerfile  render.yaml  fly.toml      internet deployment (see DEPLOY.md)
 tests/                                 end-to-end suite
 ```
 
 [src/service.js](src/service.js) is the single source of truth: a violation
 arriving over a WebSocket and one arriving over HTTP run the identical code path.
+
+---
+
+## Roles
+
+### The teacher panel — `/teacher`
+
+Each teacher signs in with their own username and password, created for them by
+the administrator. They can build quizzes, activate one, watch it being sat live,
+grant retakes, force-submit, and export results and answer sheets.
+
+They see **only the quizzes they created**. Another teacher's quiz is not merely
+hidden from the page — the API answers `404` for it, so a teacher who opens the
+browser console and calls the endpoint directly learns nothing at all. `403`
+would confirm the quiz exists and let somebody walk the id space to map out what
+every colleague is running and when.
+
+Two things are deliberately withheld:
+
+- **Teacher accounts.** Creating and disabling staff logins is the
+  administrator's, or a teacher could grant themselves a second identity.
+- **The join address, QR code and network panel.** These describe the server
+  itself. Ask the administrator to project them.
+
+Teachers keep the mid-exam overrides they actually need — grant retake, force
+submit — scoped to their own quizzes.
+
+### The administrator console — `/admin`
+
+Everything a teacher can do, for every teacher's exams, plus:
+
+| Panel | What it is for |
+| --- | --- |
+| Teachers | Create accounts, set passwords, disable, delete |
+| Students | The whole-school roster, and the only place a student can be erased |
+| Join Info | The address and QR code students use |
+
+Disabling or deleting a teacher, or changing their password, **cuts any session
+they are already holding**. Otherwise "disabled" would only mean "cannot sign in
+again", leaving up to twelve hours of continued access — precisely the window in
+which somebody is disabled for a reason.
+
+Deleting a teacher **keeps their quizzes and every result**. Ownership falls to
+the administrator. Losing a term of marks because a member of staff left would be
+indefensible.
+
+### Quiz ownership
+
+`quizzes.owner_id` records who made each one. Quizzes created by the
+administrator have no owner and are visible only to the administrator — which is
+also what every quiz that predates this feature looks like, so an upgrade never
+hands old exams to whichever teacher signs in first.
+
+The owner is stamped from the caller's session at creation and is never read
+from the request body, so a teacher cannot plant a quiz in a colleague's list.
+
+Only **one quiz system-wide can be active at a time**, whoever owns it. A teacher
+activating theirs closes whatever was running.
 
 ---
 
@@ -324,6 +419,13 @@ These are OS/browser constraints, not implementation gaps:
 | Stable shuffle             | The per-attempt seed is stored, so a reload or resume rebuilds the same order instead of stranding saved answers |
 | Image access control       | `/api/quiz/image/:id` serves only images from the quiz the caller is sitting; SVG is rejected outright |
 | Marks withheld             | `studentView()` strips `score`/`correct`/`total` from every student HTTP response and socket event; admin views are untouched |
+| Access code never leaks    | `mapQuiz()` omits `access_code` unless a caller explicitly asks; `/api/quiz/active` reports only *whether* one is needed |
+| Login cannot be brute-forced | Failed admin passwords lock the caller out; student logins are rate-limited generously enough to survive a whole class behind one NAT address |
+| Password fit for a public address | Internet mode refuses to start on a generated, short or obvious `ADMIN_PASSWORD`, and never prints it |
+| Teachers cannot reach each other | Every quiz, monitor, result and override route resolves through one ownership check; a non-owner gets `404`, never `403` |
+| Sockets are scoped too | `admin:watch` re-checks ownership on every switch rather than trusting the join, and the live flag feed fans out per quiz instead of to one shared room |
+| Revocation is immediate | Disabling, deleting or re-passwording a teacher drops their live sessions, not just their next login |
+| Teacher passwords are not recoverable | Stored as scrypt hashes; the administrator can set a new one but can never read the old |
 
 **Attempt resume is a deliberate addition.** A dropped Wi-Fi connection or a
 browser crash would otherwise lock a student out permanently and force an admin
@@ -339,6 +441,10 @@ SQLite in WAL mode. Timestamps are ISO-8601 UTC text; `options` is a JSON array.
 - **`students`** - `student_id` (PK), `name`, `created_at`
 - **`quizzes`** - `quiz_id` (PK), `title`, `duration_minutes`, `is_active`, `created_at`
   - plus: `shuffle_questions` (per-student randomization, default on)
+  - plus: `access_code` (nullable; when set, students must supply it to log in)
+  - plus: `owner_id` (FK to `teachers`, `ON DELETE SET NULL`; NULL = administrator's)
+- **`teachers`** - `teacher_id` (PK), `username` (unique, case-insensitive),
+  `display_name`, `password_hash` (scrypt), `is_active`, `created_at`, `last_login`
 - **`questions`** - `question_id` (PK), `quiz_id` (FK), `question_text`, `options` (JSON), `correct_option`, `position`
   - plus: `image_data` (BLOB), `image_mime`
 - **`attempts`** - `attempt_id` (PK), `student_id` (FK), `quiz_id` (FK), `status`, `score`, `start_time`, `submit_time`
@@ -368,8 +474,8 @@ started, and `TERMINATED` displays as auto-terminated.
 
 | Method | Endpoint                | Notes                                                     |
 | ------ | ----------------------- | --------------------------------------------------------- |
-| `GET`  | `/api/quiz/active`      | Currently open quiz, or `{active:false}`                  |
-| `POST` | `/api/auth/login`       | `{studentId, name}` -> session token. **403** if an attempt is recorded |
+| `GET`  | `/api/quiz/active`      | Currently open quiz, or `{active:false}`. `requiresCode` says whether an access code is needed - never the code itself |
+| `POST` | `/api/auth/login`       | `{studentId, name, accessCode?}` -> session token. **403** if an attempt is recorded, or the code is wrong (`codeRequired:true`) |
 | `GET`  | `/api/quiz/exam`        | Questions in this student's shuffled order, **without** the answer key |
 | `GET`  | `/api/quiz/image/:questionId?t=<token>` | Question image; only for the caller's own quiz |
 | `POST` | `/api/quiz/progress`    | Autosave answers                                          |
@@ -384,7 +490,27 @@ A blocked login returns exactly the specified message:
   "status": "SUBMITTED" }
 ```
 
-### Admin - all require `Authorization: Bearer <admin token>`
+### Open endpoints
+
+| Method | Endpoint         | Notes                                                        |
+| ------ | ---------------- | ------------------------------------------------------------ |
+| `GET`  | `/api/health`    | Liveness probe for a hosting platform. Answers over plaintext, ahead of the HTTPS redirect |
+| `GET`  | `/api/network`   | The join address. Reports the LAN interface locally; withholds internal addressing once public |
+| `GET`  | `/api/qr.png`    | QR code of the join address, for projecting                  |
+
+### Staff sign-in
+
+| Method | Endpoint              | Notes                                             |
+| ------ | --------------------- | ------------------------------------------------- |
+| `POST` | `/api/admin/login`    | `{password}` -> administrator token                |
+| `POST` | `/api/teacher/login`  | `{username, password}` -> teacher token. One message for a wrong user, a wrong password and a disabled account |
+| `GET`  | `/api/admin/session`  | Who am I: `{role, name, username, teacherId}`      |
+| `POST` | `/api/admin/logout`   | Revokes this token immediately                     |
+
+### Management - `Authorization: Bearer <staff token>`
+
+Teachers and the administrator share these routes; the server scopes every one
+of them by role. A teacher acting on a quiz they do not own gets `404`.
 
 | Method   | Endpoint                                | Notes                                    |
 | -------- | --------------------------------------- | ---------------------------------------- |
@@ -405,6 +531,17 @@ A blocked login returns exactly the specified message:
 | `GET`    | `/api/admin/results/:quizId/student/:studentId/answers.pdf` | That paper as a PDF  |
 | `GET`    | `/api/admin/results/:quizId/answers.pdf` | Every student's paper in one PDF         |
 
+### Administrator only
+
+| Method   | Endpoint                        | Notes                                  |
+| -------- | ------------------------------- | -------------------------------------- |
+| `GET`    | `/api/admin/teachers`           | All teacher accounts                   |
+| `POST`   | `/api/admin/teachers`           | `{username, displayName, password}`    |
+| `PUT`    | `/api/admin/teachers/:id`       | `{displayName?, isActive?, password?}` - any of these cuts live sessions |
+| `DELETE` | `/api/admin/teachers/:id`       | Removes the login; quizzes and results are kept |
+| `DELETE` | `/api/admin/students/:studentId` | Erases a student and every attempt, school-wide |
+| `GET`    | `/api/network`, `/api/qr.png`   | The join address                       |
+
 ### WebSocket events
 
 | Direction        | Event                        | Payload / effect                          |
@@ -414,7 +551,7 @@ A blocked login returns exactly the specified message:
 | student -> server | `flag_and_submit`           | `{reason, answers}` - flag + terminate    |
 | student -> server | `flag`                      | `{reason}` - warning only                 |
 | server -> student | `exam:terminated` / `exam:expired` / `session:invalid` | Client locks the screen |
-| admin -> server   | `admin:join` / `admin:watch` | `{token, quizId}`                        |
+| staff -> server   | `admin:join` / `admin:watch` | `{token, quizId}` - ownership re-checked on every watch |
 | server -> admin   | `admin:snapshot`            | Full roster state (coalesced, max 1 per 250 ms) |
 | server -> admin   | `admin:flag` / `admin:attempt` / `admin:reset` | Live alerts            |
 
@@ -426,7 +563,7 @@ A blocked login returns exactly the specified message:
 npm test
 ```
 
-110 tests against a real HTTP server, real WebSockets and a real SQLite database
+159 tests against a real HTTP server, real WebSockets and a real SQLite database
 - no mocks. Coverage includes: admin auth, quiz validation and CRUD, answer-key
 non-leakage, autosave merging into the final score, the 403 single-attempt
 block, retake reset, resume-without-extra-time, auto-termination, double-submit
@@ -572,6 +709,33 @@ since the QR encodes the complete URL.
 ---
 
 ## Deployment notes
+
+### Publishing to the internet
+
+Full instructions are in **[DEPLOY.md](DEPLOY.md)**. In short:
+
+```bash
+npm run go-live                         # publish from this machine, temporary address
+```
+
+or set `PUBLIC_URL` and `ADMIN_PASSWORD` and deploy the included `Dockerfile`
+for a permanent one. Three constraints are not negotiable: the database must sit
+on a persistent volume, exactly one instance may run, and it must be served over
+HTTPS.
+
+Two things are worth knowing before you publish an exam:
+
+- **Set an access code on the quiz** (in the admin console, beside the
+  duration). On a LAN, being in the room was the gate. A public join link gets
+  forwarded and screenshotted, so the code is what actually decides who sits the
+  exam.
+- **The lockdown does not get weaker, but the supervision does.** The browser
+  controls catch exactly what they always caught. They have never been able to
+  see a second device or a person in the room, and for a student sitting at
+  home, neither of those is unlikely. See
+  [Honest limits of browser-based lockdown](#honest-limits-of-browser-based-lockdown).
+
+### Local Wi-Fi
 
 - **Firewall:** on first run, Windows will prompt to allow Node.js on private
   networks. Accept it, or students cannot connect.

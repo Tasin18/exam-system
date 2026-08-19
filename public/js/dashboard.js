@@ -1,11 +1,46 @@
-/** Admin console: quiz CRUD, live monitoring, overrides, results & export. */
+/**
+ * Staff dashboard: quiz CRUD, live monitoring, overrides, results & export.
+ *
+ * One implementation, two pages. `/teacher` and `/admin` load this same file and
+ * differ only in the markup they bring with them - the teacher page simply has
+ * no Join Info or Teachers sections in its HTML. Everything here therefore
+ * tolerates an element being absent rather than assuming the full console.
+ *
+ * The split is presentational only. What a teacher may actually read or change
+ * is decided by the server on every request; hiding a button here is a courtesy,
+ * never a control.
+ */
 (function () {
   'use strict';
 
+  // Returns null rather than throwing when a section is not on this page.
   var $ = function (id) { return document.getElementById(id); };
+
+  /** Binds a listener only if the element exists on this page. */
+  var on = function (id, event, handler) {
+    var el = $(id);
+    if (el) el.addEventListener(event, handler);
+    return el;
+  };
+
+  /** Sets textContent when the element is present. */
+  var setText = function (id, value) {
+    var el = $(id);
+    if (el) el.textContent = value;
+  };
+
   var LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
-  var token = sessionStorage.getItem('admin.token') || null;
+  // 'admin' or 'teacher', declared by the page that loaded this script.
+  var ROLE = document.body.getAttribute('data-role') || 'admin';
+  var IS_ADMIN = ROLE === 'admin';
+
+  // Keyed by role so signing into the teacher panel in one tab does not evict
+  // the administrator session in another - a very easy way to lose your place
+  // in the middle of an exam.
+  var TOKEN_KEY = 'staff.token.' + ROLE;
+
+  var token = sessionStorage.getItem(TOKEN_KEY) || null;
   var socket = null;
   var state = {
     view: 'monitor',
@@ -17,6 +52,7 @@
     sheetStudentId: null, // student whose response sheet is open
     joinUrl: null,        // last known student join URL, to detect DHCP changes
     feed: [],
+    session: null,       // { role, name, username } once signed in
   };
 
   /* ================= Gate ================= */
@@ -28,34 +64,48 @@
     if (message) $('gateError').textContent = message;
   }
 
-  function enterShell() {
+  function enterShell(session) {
+    state.session = session || state.session;
     $('gate').hidden = true;
     $('shell').hidden = false;
+    if (state.session) setText('whoami', state.session.name);
     connectSocket();
     loadQuizzes();
     loadNetwork();
+    if (window.adminExtras) window.adminExtras.init(api, function () { return token; }, guard);
   }
 
-  $('gateForm').addEventListener('submit', function (e) {
+  on('gateForm', 'submit', function (e) {
     e.preventDefault();
-    api.post('/api/admin/login', { password: $('password').value }).then(function (data) {
+    var url = IS_ADMIN ? '/api/admin/login' : '/api/teacher/login';
+    var body = IS_ADMIN
+      ? { password: $('password').value }
+      : { username: $('username').value.trim(), password: $('password').value };
+
+    api.post(url, body).then(function (data) {
       token = data.token;
-      sessionStorage.setItem('admin.token', token);
+      sessionStorage.setItem(TOKEN_KEY, token);
       $('password').value = '';
-      enterShell();
+      enterShell({ role: data.role, name: data.name, username: data.username });
     }).catch(function (err) { showGate(err.message); });
   });
 
-  $('logout').addEventListener('click', function () {
-    sessionStorage.removeItem('admin.token');
+  on('logout', 'click', function () {
+    var dying = token;
+    sessionStorage.removeItem(TOKEN_KEY);
     token = null;
     if (socket) socket.disconnect();
     showGate(null);
+    // Kill it server-side too, and do not wait for the answer. Dropping the
+    // token from this tab used to be enough when the only way to use it was to
+    // be sitting at this machine; a dashboard reachable from the internet needs
+    // the token itself to stop working, not merely to be forgotten here.
+    if (dying) api.post('/api/admin/logout', {}, dying).catch(function () {});
   });
 
   function guard(err) {
     if (err && err.status === 401) {
-      sessionStorage.removeItem('admin.token');
+      sessionStorage.removeItem(TOKEN_KEY);
       token = null;
       showGate('Session expired. Please sign in again.');
       return true;
@@ -68,16 +118,22 @@
 
   /* ================= Navigation ================= */
 
-  Array.prototype.forEach.call(document.querySelectorAll('.top nav button'), function (btn) {
+  // Derived from the buttons actually present, so the teacher page's shorter
+  // navigation needs no separate code path and adding a section is markup only.
+  var navButtons = Array.prototype.slice.call(
+    document.querySelectorAll('.top nav button[data-view]'));
+  var views = navButtons.map(function (b) { return b.getAttribute('data-view'); });
+
+  navButtons.forEach(function (btn) {
     btn.addEventListener('click', function () {
       state.view = btn.getAttribute('data-view');
-      Array.prototype.forEach.call(document.querySelectorAll('.top nav button'), function (b) {
-        b.classList.toggle('active', b === btn);
-      });
-      ['monitor', 'quizzes', 'results', 'network'].forEach(function (name) {
-        $('view-' + name).hidden = name !== state.view;
+      navButtons.forEach(function (b) { b.classList.toggle('active', b === btn); });
+      views.forEach(function (name) {
+        var section = $('view-' + name);
+        if (section) section.hidden = name !== state.view;
       });
       if (state.view === 'results') loadResults();
+      if (state.view === 'teachers' && window.adminExtras) window.adminExtras.loadTeachers();
     });
   });
 
@@ -91,9 +147,9 @@
       socket.emit('admin:join', { token: token, quizId: state.monitorQuizId }, function (ack) {
         if (ack && ack.ok) {
           $('liveDot').style.background = '#17795e';
-          $('liveText').textContent = 'live';
+          setText('liveText', 'live');
         } else {
-          $('liveText').textContent = 'unauthorized';
+          setText('liveText', 'unauthorized');
         }
       });
     });
@@ -151,11 +207,14 @@
     toggle.textContent = snapshot.quiz.is_active ? 'Deactivate' : 'Activate';
     toggle.className = 'btn' + (snapshot.quiz.is_active ? ' danger' : '');
 
-    $('statOnline').textContent = snapshot.onlineCount;
-    $('statNotStarted').textContent = snapshot.counts.NOT_STARTED;
-    $('statInProgress').textContent = snapshot.counts.IN_PROGRESS;
-    $('statSubmitted').textContent = snapshot.counts.SUBMITTED;
-    $('statTerminated').textContent = snapshot.counts.AUTO_TERMINATED;
+    setText('statOnline', snapshot.onlineCount);
+    // "Sitting" replaces the old "Not started". The monitor now lists the people
+    // taking this exam rather than every student the system has ever seen, so a
+    // count of who has not turned up no longer has a roster to count against.
+    setText('statSitting', snapshot.counts.SITTING);
+    setText('statInProgress', snapshot.counts.IN_PROGRESS);
+    setText('statSubmitted', snapshot.counts.SUBMITTED);
+    setText('statTerminated', snapshot.counts.AUTO_TERMINATED);
 
     var rows = snapshot.students.map(function (s) {
       var canReset = s.display === 'SUBMITTED' || s.display === 'AUTO_TERMINATED';
@@ -174,8 +233,7 @@
         + '<td><span class="pill ' + (s.online ? 'live' : 'off') + '">'
           + (s.online ? 'online' : 'offline') + '</span></td>'
         + '<td class="num">' + (s.total ? s.answered + '/' + s.total : '—') + '</td>'
-        + '<td class="num">' + (s.display === 'NOT_STARTED' || s.display === 'IN_PROGRESS'
-            ? '—' : s.score + '%') + '</td>'
+        + '<td class="num">' + (s.display === 'IN_PROGRESS' ? '—' : s.score + '%') + '</td>'
         + '<td class="num">' + (s.violations || 0) + '</td>'
         + '<td>' + fmtTime(s.startTime) + '</td>'
         + '<td class="actions">' + actions + '</td>'
@@ -186,7 +244,7 @@
     $('monitorEmpty').hidden = rows.length > 0;
   }
 
-  $('monitorRows').addEventListener('click', function (e) {
+  on('monitorRows', 'click', function (e) {
     var btn = e.target.closest('button[data-act]');
     if (!btn) return;
     var studentId = btn.getAttribute('data-id');
@@ -209,11 +267,11 @@
     }
   });
 
-  $('monitorQuiz').addEventListener('change', function () {
+  on('monitorQuiz', 'change', function () {
     watch(Number(this.value));
   });
 
-  $('toggleActive').addEventListener('click', function () {
+  on('toggleActive', 'click', function () {
     if (!state.monitorQuizId || !state.snapshot) return;
     var next = !state.snapshot.quiz.is_active;
     api.post('/api/admin/quizzes/' + state.monitorQuizId + '/activate', { active: next }, token)
@@ -283,9 +341,17 @@
 
   function renderQuizTable() {
     var rows = state.quizzes.map(function (q) {
+      // Only the administrator sees more than one person's quizzes, so only the
+      // administrator's table has a column for whose they are.
+      var owner = IS_ADMIN
+        ? '<td>' + (q.owner_name
+          ? esc(q.owner_name)
+          : '<span class="pill NOT_STARTED">admin</span>') + '</td>'
+        : '';
       return '<tr>'
         + '<td class="num">' + q.quiz_id + '</td>'
         + '<td><strong>' + esc(q.title) + '</strong></td>'
+        + owner
         + '<td class="num">' + q.question_count + '</td>'
         + '<td class="num">' + q.duration_minutes + ' min</td>'
         + '<td>' + (q.shuffle_questions
@@ -306,7 +372,7 @@
     $('quizEmpty').hidden = rows.length > 0;
   }
 
-  $('quizRows').addEventListener('click', function (e) {
+  on('quizRows', 'click', function (e) {
     var btn = e.target.closest('button[data-act]');
     if (!btn) return;
     var quizId = Number(btn.getAttribute('data-id'));
@@ -506,6 +572,7 @@
       $('editorTitle').textContent = 'New Quiz';
       $('quizTitleInput').value = '';
       $('quizDuration').value = '30';
+      $('quizAccessCode').value = '';
       $('quizShuffle').checked = true;
       $('questionList').innerHTML = questionEditorHtml(0, null);
       $('editorPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -517,6 +584,7 @@
       $('editorTitle').textContent = 'Edit — ' + data.quiz.title;
       $('quizTitleInput').value = data.quiz.title;
       $('quizDuration').value = data.quiz.duration_minutes;
+      $('quizAccessCode').value = data.quiz.access_code || '';
       $('quizShuffle').checked = data.quiz.shuffle_questions !== false;
       $('questionList').innerHTML = data.questions.length
         ? data.questions.map(function (q, i) { return questionEditorHtml(i, q); }).join('')
@@ -530,15 +598,15 @@
     state.editing = null;
   }
 
-  $('newQuiz').addEventListener('click', function () { openEditor(null); });
-  $('closeEditor').addEventListener('click', closeEditor);
+  on('newQuiz', 'click', function () { openEditor(null); });
+  on('closeEditor', 'click', closeEditor);
 
-  $('addQuestion').addEventListener('click', function () {
+  on('addQuestion', 'click', function () {
     var index = $('questionList').children.length;
     $('questionList').insertAdjacentHTML('beforeend', questionEditorHtml(index, null));
   });
 
-  $('questionList').addEventListener('click', function (e) {
+  on('questionList', 'click', function (e) {
     var btn = e.target.closest('button[data-act]');
     if (!btn) return;
     var node = btn.closest('.q-editor');
@@ -557,7 +625,7 @@
     if (act === 'remove-image') setQuestionImage(node, null, '');
   });
 
-  $('questionList').addEventListener('change', function (e) {
+  on('questionList', 'change', function (e) {
     var input = e.target.closest('.q-image-input');
     if (!input || !input.files || !input.files[0]) return;
     var node = input.closest('.q-editor');
@@ -613,11 +681,14 @@
       title: title,
       durationMinutes: duration,
       shuffleQuestions: $('quizShuffle').checked,
+      // Always sent, including as null, so clearing the box actually removes the
+      // code. Omitting the key means "leave it alone" on the server.
+      accessCode: $('quizAccessCode').value.trim() || null,
       questions: questions,
     };
   }
 
-  $('saveQuiz').addEventListener('click', function () {
+  on('saveQuiz', 'click', function () {
     var payload;
     try {
       payload = collectQuiz();
@@ -647,7 +718,7 @@
 
   /* ================= Results ================= */
 
-  $('resultsQuiz').addEventListener('change', loadResults);
+  on('resultsQuiz', 'change', loadResults);
 
   function loadResults() {
     var quizId = Number($('resultsQuiz').value);
@@ -698,13 +769,13 @@
 
   /* ---------------- Individual response sheet ---------------- */
 
-  $('resultRows').addEventListener('click', function (e) {
+  on('resultRows', 'click', function (e) {
     var btn = e.target.closest('button[data-act="sheet"]');
     if (!btn) return;
     openSheet(btn.getAttribute('data-id'));
   });
 
-  $('sheetClose').addEventListener('click', closeSheet);
+  on('sheetClose', 'click', closeSheet);
 
   function closeSheet() {
     $('sheetPanel').hidden = true;
@@ -860,28 +931,28 @@
     return 'answers-' + String(state.sheetStudentId).replace(/[^a-z0-9]+/gi, '-') + '.pdf';
   }
 
-  $('sheetPdf').addEventListener('click', function () {
+  on('sheetPdf', 'click', function () {
     if (!state.resultsQuizId || !state.sheetStudentId) return;
     fetchFile('/api/admin/results/' + state.resultsQuizId + '/student/'
       + encodeURIComponent(state.sheetStudentId) + '/answers.pdf',
     this, 'view', sheetFileName());
   });
 
-  $('sheetPdfSave').addEventListener('click', function () {
+  on('sheetPdfSave', 'click', function () {
     if (!state.resultsQuizId || !state.sheetStudentId) return;
     fetchFile('/api/admin/results/' + state.resultsQuizId + '/student/'
       + encodeURIComponent(state.sheetStudentId) + '/answers.pdf',
     this, 'save', sheetFileName());
   });
 
-  $('exportAllPdf').addEventListener('click', function () {
+  on('exportAllPdf', 'click', function () {
     var quizId = Number($('resultsQuiz').value);
     if (!quizId) return;
     fetchFile('/api/admin/results/' + quizId + '/answers.pdf',
       this, 'save', 'answers-all-quiz-' + quizId + '.pdf');
   });
 
-  $('exportCsv').addEventListener('click', function () {
+  on('exportCsv', 'click', function () {
     var quizId = Number($('resultsQuiz').value);
     if (!quizId) return;
     fetchFile('/api/admin/results/' + quizId + '/export.csv',
@@ -896,18 +967,38 @@
    * student's bookmark — so poll for it and shout when it changes.
    */
   function loadNetwork() {
-    api.get('/api/network').then(function (data) {
+    // Join Info is the administrator's panel; the teacher page has no such
+    // section and the endpoint would refuse it anyway.
+    if (!$('joinUrl')) return;
+    api.get('/api/network', token).then(function (data) {
       var changed = state.joinUrl && state.joinUrl !== data.url;
       state.joinUrl = data.url;
+      var online = data.mode === 'internet';
 
       $('joinUrl').textContent = data.url;
-      $('ifaceHint').textContent = 'Serving on interface "' + data.interface + '" — port '
-        + data.port + '. Students must be on the same Wi-Fi network.';
-      // Cache-bust so the QR never lags the address it encodes.
-      $('qrImage').src = '/api/qr.png?v=' + encodeURIComponent(data.url);
+      $('joinModeHint').textContent = online
+        ? 'This exam is published on the internet. Students can join from mobile data, '
+          + 'home broadband or any other network - they do not need to be near you.'
+        : 'Students must be on the same Wi-Fi network as this machine.';
+
+      $('ifaceHint').textContent = online
+        ? (data.secure
+          ? 'Served over HTTPS. Remember to set an access code on the quiz - anyone '
+            + 'holding this link can otherwise reach the login page.'
+          : 'WARNING: this address is plain HTTP. Answers and passwords cross the '
+            + 'internet unencrypted. Put HTTPS in front of it before a real exam.')
+        : 'Serving on interface "' + data.interface + '" — port ' + data.port
+          + '. Students must be on the same Wi-Fi network.';
+      // Cache-bust so the QR never lags the address it encodes. An <img> cannot
+      // carry an Authorization header, so the session rides in the query string.
+      $('qrImage').src = '/api/qr.png?adminToken=' + encodeURIComponent(token)
+        + '&v=' + encodeURIComponent(data.url);
 
       var warn = $('netWarning');
-      if (data.changedSinceStart || changed) {
+      if (online) {
+        // A public hostname does not move when DHCP reshuffles the LAN.
+        warn.hidden = true;
+      } else if (data.changedSinceStart || changed) {
         warn.hidden = false;
         warn.innerHTML = '<strong>This machine\'s address changed.</strong> '
           + 'It was <code>' + esc(data.bootAddress) + '</code> when the server started and is '
@@ -921,7 +1012,7 @@
     }).catch(function () { /* network panel is informational */ });
   }
 
-  $('copyUrl').addEventListener('click', function () {
+  on('copyUrl', 'click', function () {
     var url = $('joinUrl').textContent;
     var done = function () {
       $('copyUrl').textContent = 'Copied';
