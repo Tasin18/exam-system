@@ -98,7 +98,7 @@ ADMIN_PASSWORD=exam2026 PORT=8080 npm start
 | `npm run go-live`       | Publish this machine to the internet through a Cloudflare tunnel |
 | `npm run start:env`     | Run with settings loaded from a local `.env` file         |
 | `npm run netcheck`      | Diagnose "students cannot open the portal" (checks the public address too) |
-| `npm test`              | 159 end-to-end tests (real HTTP + WebSockets + SQLite)     |
+| `npm test`              | 175 end-to-end tests (real HTTP + WebSockets + SQLite)     |
 | `npm run seed`          | Load a demo quiz, roster and a `demo` teacher account     |
 | `npm run password`      | Print the saved admin password                            |
 | `npm run password -- X` | Set the admin password to `X` (restart to apply)          |
@@ -236,6 +236,38 @@ Configured in one place - `POLICY` at the top of
 On termination the client locks the screen instantly, then guarantees delivery
 through three paths in order: **socket ack -> HTTP POST -> `sendBeacon`**. The
 attempt is recorded as `TERMINATED` with the violation reason.
+
+### Per-question marks
+
+Every question carries its own mark, set in the quiz editor beside the question
+number. **The default is 1**, which is what every question was worth before this
+existed, so an ordinary paper needs no attention paid to the field at all. Half
+marks are allowed (`0.5`, `2.5`); two decimal places is the floor, because a mark
+of `0.333` cannot be added up cleanly and only ever arrives by accident.
+
+The percentage is **earned marks over the paper's total**, not questions right
+over questions asked. On a paper with a 1-mark question and a 9-mark question,
+answering only the 9 is 90% — counting questions would call it 50%, and that
+difference is the reason for the feature.
+
+Both tallies are stored on the attempt, because once questions are weighted
+neither implies the other:
+
+| Stored | Means |
+| --- | --- |
+| `earned_marks` / `total_marks` | The result. What goes in the register. |
+| `correct_count` / `total_questions` | How many questions were right. What an invigilator reads at a glance. |
+
+Marks are shown wherever a score is:
+
+- **Quiz editor** — a marks box per question, plus a running `4 questions · 8.5 marks total` readout, so an examiner who wanted a paper out of 50 notices they have built one out of 47.
+- **The student's paper** — each question is badged with what it is worth, and the login screen states the paper total. Somebody sitting an exam is entitled to know where the marks are before deciding how to spend the time.
+- **Live monitor, results table, answer sheets, CSV, PDF** — marks alongside the percentage. The CSV leads with `Marks, Total Marks` because a spreadsheet built from it is usually a mark sheet.
+
+Existing databases migrate exactly rather than approximately: every question
+becomes worth 1, and every attempt already recorded is backfilled with
+`earned_marks = correct_count`, which is precisely what it scored when all
+questions were worth one mark. Verified against a real 129-attempt database.
 
 ### Per-student question order
 
@@ -422,6 +454,8 @@ These are OS/browser constraints, not implementation gaps:
 | Access code never leaks    | `mapQuiz()` omits `access_code` unless a caller explicitly asks; `/api/quiz/active` reports only *whether* one is needed |
 | Login cannot be brute-forced | Failed admin passwords lock the caller out; student logins are rate-limited generously enough to survive a whole class behind one NAT address |
 | Password fit for a public address | Internet mode refuses to start on a generated, short or obvious `ADMIN_PASSWORD`, and never prints it |
+| Marks are graded server-side | The client sends only chosen option indices; weights are read from the database, never from the request |
+| Weighted totals do not drift | Marks are rounded to two places on every accumulation, so 0.5 + 1.5 is 2 and never 1.9999999999999998 |
 | Teachers cannot reach each other | Every quiz, monitor, result and override route resolves through one ownership check; a non-owner gets `404`, never `403` |
 | Sockets are scoped too | `admin:watch` re-checks ownership on every switch rather than trusting the join, and the live flag feed fans out per quiz instead of to one shared room |
 | Revocation is immediate | Disabling, deleting or re-passwording a teacher drops their live sessions, not just their next login |
@@ -447,8 +481,10 @@ SQLite in WAL mode. Timestamps are ISO-8601 UTC text; `options` is a JSON array.
   `display_name`, `password_hash` (scrypt), `is_active`, `created_at`, `last_login`
 - **`questions`** - `question_id` (PK), `quiz_id` (FK), `question_text`, `options` (JSON), `correct_option`, `position`
   - plus: `image_data` (BLOB), `image_mime`
+  - plus: `marks` (REAL, default 1 - what this question is worth)
 - **`attempts`** - `attempt_id` (PK), `student_id` (FK), `quiz_id` (FK), `status`, `score`, `start_time`, `submit_time`
   - plus: `correct_count`, `total_questions`, `answers_json`, `submission_type`, `reason`, `violations`, `token`, `shuffle_seed`
+  - plus: `earned_marks`, `total_marks` - the weighted result, backfilled from the counts for rows predating marks
 - **`flags`** - `flag_id` (PK), `student_id`, `quiz_id`, `reason`, `severity`, `created_at`
 - **`settings`** - `key` (PK), `value` - host settings that must survive a restart
 
@@ -563,7 +599,7 @@ of them by role. A teacher acting on a quiz they do not own gets `404`.
 npm test
 ```
 
-159 tests against a real HTTP server, real WebSockets and a real SQLite database
+175 tests against a real HTTP server, real WebSockets and a real SQLite database
 - no mocks. Coverage includes: admin auth, quiz validation and CRUD, answer-key
 non-leakage, autosave merging into the final score, the 403 single-attempt
 block, retake reset, resume-without-extra-time, auto-termination, double-submit

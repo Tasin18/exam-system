@@ -363,7 +363,8 @@ test('CSV export contains a header and one row per attempt', async () => {
 
   const text = await res.text();
   const lines = text.trim().split(/\r?\n/);
-  assert.match(lines[0], /Student ID,Name,Status,Score \(%\)/);
+  // Marks lead the score columns: a mark sheet is what this export is for.
+  assert.match(lines[0], /Student ID,Name,Status,Marks,Total Marks,Score \(%\),Correct,Questions/);
   assert.ok(lines.length >= 4);
 });
 

@@ -102,27 +102,61 @@ const newSeed = () => crypto.randomInt(1, 2 ** 31 - 1);
  * Scoring
  * ------------------------------------------------------------------ */
 
+/** Marks are money: 0.1 + 0.2 must not be allowed to become 0.30000000000000004. */
+const roundMarks = (value) => Math.round(value * 100) / 100;
+
 /**
  * Grades submitted answers server-side. Answers are keyed by question id as
  * `q<question_id>` (or the bare id) to match the documented payload shape.
+ *
+ * Two tallies come out of this, and both are stored:
+ *
+ *  - **marks** — what the student scored. Each question carries its own weight,
+ *    so a two-mark question answered correctly is worth twice a one-mark one,
+ *    and the percentage is earned marks over the paper's total.
+ *  - **counts** — how many questions were right. Once questions are worth
+ *    different amounts this stops being derivable from the marks, and it is
+ *    still what an invigilator reads at a glance, so it is kept alongside.
  */
 function grade(quizId, answers) {
   const rows = q.questionsByQuiz.all(quizId);
   let correct = 0;
+  let earned = 0;
+  let possible = 0;
   const detail = [];
 
   for (const row of rows) {
+    const marks = Number(row.marks) || 0;
+    possible += marks;
+
     const raw = answers[`q${row.question_id}`] ?? answers[String(row.question_id)];
     const picked = Number.isInteger(raw) ? raw : Number.parseInt(raw, 10);
     const chosen = Number.isInteger(picked) ? picked : null;
     const isCorrect = chosen === row.correct_option;
-    if (isCorrect) correct += 1;
-    detail.push({ question_id: row.question_id, chosen, correct_option: row.correct_option, isCorrect });
+    if (isCorrect) {
+      correct += 1;
+      earned += marks;
+    }
+    detail.push({
+      question_id: row.question_id,
+      chosen,
+      correct_option: row.correct_option,
+      isCorrect,
+      marks,
+      awarded: isCorrect ? marks : 0,
+    });
   }
 
   const total = rows.length;
-  const score = total ? Math.round((correct / total) * 10000) / 100 : 0;
-  return { correct, total, score, detail };
+  const totalMarks = roundMarks(possible);
+  const earnedMarks = roundMarks(earned);
+  // Percentage comes off the marks, not the question count. With a 1-mark and a
+  // 9-mark question, getting only the 9 is 90%, not 50%.
+  const score = totalMarks
+    ? Math.round((earnedMarks / totalMarks) * 10000) / 100
+    : 0;
+
+  return { correct, total, earnedMarks, totalMarks, score, detail };
 }
 
 /* ------------------------------------------------------------------ *
@@ -234,7 +268,13 @@ function examPayload(token) {
 
   const student = q.getStudent.get(attempt.student_id);
   return {
-    quiz: { quizId: quiz.quiz_id, title: quiz.title, durationMinutes: quiz.duration_minutes },
+    quiz: {
+      quizId: quiz.quiz_id,
+      title: quiz.title,
+      durationMinutes: quiz.duration_minutes,
+      // So the paper can say "50 marks" at the top, the way a printed one does.
+      totalMarks: q.totalMarks.get(quiz.quiz_id).total,
+    },
     student: { studentId: attempt.student_id, name: student ? student.name : attempt.student_id },
     // correct_option is deliberately never serialized to a student client.
     questions: orderedQuestions(attempt, quiz).map((row) => mapQuestion(row)),
@@ -286,13 +326,13 @@ function finalize(attempt, quiz, { answers, submissionType, reason }) {
     ...(answers && typeof answers === 'object' ? answers : {}),
   };
 
-  const { correct, total, score } = grade(quiz.quiz_id, merged);
+  const { correct, total, score, earnedMarks, totalMarks } = grade(quiz.quiz_id, merged);
   const terminated = submissionType === 'AUTO_TERMINATED' || submissionType === 'ADMIN_FORCED';
   const status = terminated ? 'TERMINATED' : 'SUBMITTED';
   const submittedAt = nowIso();
 
   const res = q.finalizeAttempt.run(
-    status, score, correct, total, JSON.stringify(merged),
+    status, score, correct, total, earnedMarks, totalMarks, JSON.stringify(merged),
     submissionType, reason, submittedAt, attempt.attempt_id,
   );
 
@@ -331,6 +371,8 @@ function summarizeAttempt(row) {
     score: row.score,
     correct: row.correct_count,
     total: row.total_questions,
+    earnedMarks: row.earned_marks,
+    totalMarks: row.total_marks,
     submissionType: row.submission_type,
     reason: row.reason,
     submittedAt: row.submit_time,
@@ -506,6 +548,8 @@ function monitorSnapshot(quizId) {
       score: attempt.score,
       correct: attempt.correct_count,
       total: attempt.total_questions,
+      earnedMarks: attempt.earned_marks,
+      totalMarks: attempt.total_marks,
       violations: attempt.violations,
       submissionType: attempt.submission_type,
       reason: attempt.reason,
@@ -524,6 +568,7 @@ function monitorSnapshot(quizId) {
   return {
     quiz,
     questionCount: q.countQuestions.get(quizId).n,
+    totalMarks: q.totalMarks.get(quizId).total,
     students: rows,
     counts,
     onlineCount: online.size,
@@ -567,9 +612,11 @@ function answerSheet(quizId, studentId) {
       question_text: row.question_text,
       options: JSON.parse(row.options),
       has_image: !!row.has_image,
+      marks: Number(row.marks) || 0,
       chosen,
       correct_option: row.correct_option,
       isCorrect: chosen === row.correct_option,
+      awarded: chosen === row.correct_option ? (Number(row.marks) || 0) : 0,
       answered: chosen !== null,
     };
   });
@@ -589,6 +636,8 @@ function answerSheet(quizId, studentId) {
       score: attempt.score,
       correct: attempt.correct_count,
       total: attempt.total_questions,
+      earnedMarks: attempt.earned_marks,
+      totalMarks: attempt.total_marks,
       submissionType: attempt.submission_type,
       reason: attempt.reason,
       violations: attempt.violations,
@@ -604,6 +653,10 @@ function answerSheet(quizId, studentId) {
       correct: questions.filter((item) => item.isCorrect).length,
       wrong: questions.filter((item) => item.answered && !item.isCorrect).length,
       total: questions.length,
+      // Recomputed from the paper rather than read off the attempt, so a sheet
+      // printed after the marks were edited still adds up to what it shows.
+      earnedMarks: roundMarks(questions.reduce((sum, item) => sum + item.awarded, 0)),
+      totalMarks: roundMarks(questions.reduce((sum, item) => sum + item.marks, 0)),
     },
     questions,
     generatedAt: nowIso(),
@@ -634,6 +687,7 @@ function resetAttempt({ studentId, quizId, clearFlags = true }) {
 }
 
 module.exports = {
+  roundMarks,
   bus, HttpError, presence,
   login, resolveSession, examPayload, saveProgress,
   orderedQuestions, shuffleWithSeed, seededRandom,

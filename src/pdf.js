@@ -110,6 +110,12 @@ function fontFor(text) {
  * ------------------------------------------------------------------ */
 
 const PAGE = { size: 'A4', margin: 46 };
+/** 2 -> "2", 2.5 -> "2.5". Trailing zeros make a mark scheme read like a ledger. */
+function fmtMarks(value) {
+  const n = Number(value || 0);
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+}
+
 const COLOR = {
   text: '#16202e',
   muted: '#5c6a7e',
@@ -240,10 +246,16 @@ class SheetWriter {
 
     doc.y = boxTop + 11;
     this.regular(8).fillColor(COLOR.muted).text('RESULT', rightX, doc.y, { width: rightW });
+    // Marks lead, because that is the figure that gets transcribed into a
+    // register. The percentage follows it, and the question count sits under
+    // both - with weighted questions it no longer implies the mark.
     this.bold(19).fillColor(terminated ? COLOR.wrong : COLOR.correct)
+      .text(`${fmtMarks(sheet.counts.earnedMarks)} / ${fmtMarks(sheet.counts.totalMarks)}`,
+        rightX, doc.y + 1, { width: rightW });
+    this.bold(10).fillColor(terminated ? COLOR.wrong : COLOR.correct)
       .text(`${sheet.attempt.score}%`, rightX, doc.y + 1, { width: rightW });
     this.regular(9.5).fillColor(COLOR.text).text(
-      `${sheet.counts.correct} of ${sheet.counts.total} correct`
+      `${sheet.counts.correct} of ${sheet.counts.total} questions correct`
       + `   |   ${statusLabel}`, rightX, doc.y + 2, { width: rightW });
 
     doc.y = boxTop + boxHeight + 12;
@@ -254,6 +266,7 @@ class SheetWriter {
       `Started ${fmtStamp(sheet.attempt.startTime)}`,
       `Submitted ${fmtStamp(sheet.attempt.submitTime)}`,
       `Answered ${sheet.counts.answered}/${sheet.counts.total}`,
+      `Paper total ${fmtMarks(sheet.counts.totalMarks)} marks`,
       sheet.counts.unanswered ? `Blank ${sheet.counts.unanswered}` : null,
       sheet.attempt.violations ? `Violations ${sheet.attempt.violations}` : null,
     ].filter(Boolean).join('     ');
@@ -322,8 +335,11 @@ class SheetWriter {
       ? `  [Q${item.authoredAs}]` : '');
     doc.text(this.safe(numberText), PAGE.margin, top, { width: 60, continued: false });
 
+    // "2 / 2" beside the verdict: what the question was worth, and what this
+    // student got for it. Reading down the column gives the mark breakdown.
+    const marksLabel = `${fmtMarks(item.awarded)} / ${fmtMarks(item.marks)}`;
     this.bold(7.6).fillColor(labelColor);
-    doc.text(label, PAGE.margin, top, {
+    doc.text(`${label}    ${marksLabel}`, PAGE.margin, top, {
       width: this.contentWidth, align: 'right', characterSpacing: 0.5,
     });
 

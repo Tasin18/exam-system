@@ -121,6 +121,31 @@ addColumn('quizzes', 'access_code', 'TEXT');
 // whichever teacher happens to log in first.
 addColumn('quizzes', 'owner_id', 'INTEGER REFERENCES teachers(teacher_id) ON DELETE SET NULL');
 
+// What each question is worth. REAL rather than INTEGER because half marks are
+// ordinary in real papers, and the default of 1 means every question authored
+// before this column existed is worth exactly what it was worth before.
+addColumn('questions', 'marks', 'REAL NOT NULL DEFAULT 1');
+
+// A finished attempt records marks as well as counts. Both are kept: the marks
+// are the result, and the counts are still what an invigilator reads at a glance
+// ("8 of 10 right"), which stops being derivable from the marks the moment
+// questions are worth different amounts.
+addColumn('attempts', 'earned_marks', 'REAL');
+addColumn('attempts', 'total_marks', 'REAL');
+
+/**
+ * Backfills marks onto attempts recorded before this feature existed.
+ *
+ * Exact rather than approximate: every question in such a quiz was worth one
+ * mark, so the marks earned are precisely the number answered correctly. Doing
+ * it once here means nothing downstream has to carry a "what if these are NULL"
+ * branch through every score calculation, export and PDF.
+ */
+db.exec(`
+  UPDATE attempts
+     SET earned_marks = correct_count, total_marks = total_questions
+   WHERE earned_marks IS NULL OR total_marks IS NULL`);
+
 const nowIso = () => new Date().toISOString();
 
 /* ------------------------------------------------------------------ *
@@ -152,12 +177,12 @@ const q = {
 
   addQuestion: db.prepare(`
     INSERT INTO questions
-      (quiz_id, question_text, options, correct_option, position, image_data, image_mime)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`),
+      (quiz_id, question_text, options, correct_option, position, image_data, image_mime, marks)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
   // Excludes image_data: the blob must never ride along in a JSON payload.
   questionsByQuiz: db.prepare(`
     SELECT question_id, quiz_id, question_text, options, correct_option, position,
-           image_mime, (image_data IS NOT NULL) AS has_image
+           marks, image_mime, (image_data IS NOT NULL) AS has_image
       FROM questions WHERE quiz_id = ? ORDER BY position, question_id`),
   // owner_id rides along so the image route can answer "may this teacher see
   // it?" without a second query on the hot path for every image on the page.
@@ -168,10 +193,13 @@ const q = {
   // Includes image_data, unlike questionsByQuiz: duplicating a quiz copies the
   // blobs straight across. Server-side only — never hand these rows to JSON.
   questionsForCopy: db.prepare(`
-    SELECT question_text, options, correct_option, position, image_data, image_mime
+    SELECT question_text, options, correct_option, position, image_data, image_mime, marks
       FROM questions WHERE quiz_id = ? ORDER BY position, question_id`),
   deleteQuestionsByQuiz: db.prepare('DELETE FROM questions WHERE quiz_id = ?'),
   countQuestions: db.prepare('SELECT COUNT(*) AS n FROM questions WHERE quiz_id = ?'),
+  // COALESCE so a quiz with no questions yet reports 0 rather than NULL.
+  totalMarks: db.prepare(
+    'SELECT COALESCE(SUM(marks), 0) AS total FROM questions WHERE quiz_id = ?'),
 
   createAttempt: db.prepare(`
     INSERT INTO attempts
@@ -189,6 +217,7 @@ const q = {
   finalizeAttempt: db.prepare(`
     UPDATE attempts
        SET status = ?, score = ?, correct_count = ?, total_questions = ?,
+           earned_marks = ?, total_marks = ?,
            answers_json = ?, submission_type = ?, reason = ?,
            submit_time = ?, token = NULL
      WHERE attempt_id = ? AND status = 'IN_PROGRESS'`),
@@ -276,6 +305,9 @@ function mapQuestion(row, { includeAnswer = false } = {}) {
     question_text: row.question_text,
     options: JSON.parse(row.options),
     position: row.position,
+    // Sent to students as well as staff: somebody sitting a paper is entitled to
+    // know what each question is worth before deciding where to spend the time.
+    marks: row.marks === undefined || row.marks === null ? 1 : row.marks,
     // Only a flag — the image itself is fetched from /api/quiz/image/:id so the
     // exam payload stays small and the browser can cache it.
     has_image: !!row.has_image,

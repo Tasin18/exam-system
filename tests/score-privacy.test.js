@@ -166,6 +166,7 @@ test('the mark still reaches the invigilator everywhere it should', async () => 
     headers: { Authorization: `Bearer ${adminToken}` },
   });
   const text = await csv.text();
-  assert.match(text, /PRV-1,Priya One,SUBMITTED,100/);
-  assert.match(text, /PRV-2,Pat Two,TERMINATED,25/);
+  // Marks, total marks, then the percentage.
+  assert.match(text, /PRV-1,Priya One,SUBMITTED,[\d.]+,[\d.]+,100,/);
+  assert.match(text, /PRV-2,Pat Two,TERMINATED,[\d.]+,[\d.]+,25,/);
 });

@@ -84,6 +84,34 @@ function decodeImage(value, label) {
   return { buffer, mime };
 }
 
+/**
+ * Marks for one question. Defaults to 1, which is what every question was worth
+ * before marks existed and what most of them will always be worth.
+ *
+ * Half marks are allowed because real papers use them; two decimal places is the
+ * floor, because a mark of 0.333 cannot be added up cleanly and only ever
+ * arrives by accident. Zero is refused: a question worth nothing still costs the
+ * student time to read, and a paper totalling zero has no percentage.
+ */
+function parseMarks(value, label) {
+  if (value === undefined || value === null || value === '') return 1;
+  const marks = Number(value);
+  if (!Number.isFinite(marks)) {
+    throw new svc.HttpError(400, `${label}: marks must be a number.`);
+  }
+  if (marks <= 0) {
+    throw new svc.HttpError(400, `${label}: marks must be greater than zero.`);
+  }
+  if (marks > 1000) {
+    throw new svc.HttpError(400, `${label}: marks cannot exceed 1000.`);
+  }
+  if (Math.round(marks * 100) !== marks * 100) {
+    throw new svc.HttpError(400,
+      `${label}: marks can have at most two decimal places.`);
+  }
+  return marks;
+}
+
 function validateQuestions(input) {
   if (!Array.isArray(input) || input.length === 0) {
     throw new svc.HttpError(400, 'At least one question is required.');
@@ -105,7 +133,8 @@ function validateQuestions(input) {
         `Question ${index + 1}: correct_option must be an index between 0 and ${options.length - 1}.`);
     }
     const image = decodeImage(item.image, `Question ${index + 1}`);
-    return { text, options, correct, position: index, image };
+    const marks = parseMarks(item.marks, `Question ${index + 1}`);
+    return { text, options, correct, position: index, image, marks };
   });
 }
 
@@ -182,6 +211,7 @@ function writeQuestions(quizId, parsed) {
       quizId, item.text, JSON.stringify(item.options), item.correct, item.position,
       item.image ? item.image.buffer : null,
       item.image ? item.image.mime : null,
+      item.marks,
     );
   }
 }
@@ -304,6 +334,7 @@ function buildRouter() {
       title: quiz.title,
       durationMinutes: quiz.duration_minutes,
       questionCount: q.countQuestions.get(quiz.quiz_id).n,
+      totalMarks: q.totalMarks.get(quiz.quiz_id).total,
       // Only whether a code is needed - never the code itself.
       requiresCode: quiz.requires_code,
     });
@@ -457,6 +488,7 @@ function buildRouter() {
     const quizzes = visibleQuizzes(req).map((row) => {
       const quiz = mapQuiz(row, { includeSecret: true });
       quiz.question_count = q.countQuestions.get(quiz.quiz_id).n;
+      quiz.total_marks = q.totalMarks.get(quiz.quiz_id).total;
       return quiz;
     });
     res.json({ quizzes });
@@ -596,7 +628,7 @@ function buildRouter() {
       // Positions are renumbered from 1 so a source with gaps copies clean.
       rows.forEach((row, index) => {
         q.addQuestion.run(newId, row.question_text, row.options, row.correct_option,
-          index + 1, row.image_data, row.image_mime);
+          index + 1, row.image_data, row.image_mime, row.marks);
       });
       db.exec('COMMIT');
     } catch (err) {
@@ -733,6 +765,7 @@ function buildRouter() {
   router.get('/admin/results/:quizId', auth.requireStaff, handle((req, res) => {
     const quizId = Number(req.params.quizId);
     const quiz = ownedQuiz(req, quizId);
+    const totalMarks = q.totalMarks.get(quizId).total;
     const rows = q.attemptsByQuiz.all(quizId).map((a) => ({
       ...svc.summarizeAttempt(a),
       name: a.name,
@@ -742,7 +775,7 @@ function buildRouter() {
       flags: q.flagsForStudent.all(quizId, a.student_id)
         .map((f) => ({ reason: f.reason, severity: f.severity, at: f.created_at })),
     }));
-    res.json({ quiz, results: rows });
+    res.json({ quiz, totalMarks, results: rows });
   }));
 
   /* ---- Individual response sheets ---- */
@@ -775,15 +808,21 @@ function buildRouter() {
   router.get('/admin/results/:quizId/export.csv', auth.requireStaff, handle((req, res) => {
     const quizId = Number(req.params.quizId);
     const quiz = ownedQuiz(req, quizId);
+    // Marks first, then the question counts. A spreadsheet built from this is
+    // usually a mark sheet, so the column somebody sums is the one they meet
+    // first; the counts stay because they answer a different question.
     const header = [
-      'Student ID', 'Name', 'Status', 'Score (%)', 'Correct', 'Total',
+      'Student ID', 'Name', 'Status', 'Marks', 'Total Marks', 'Score (%)',
+      'Correct', 'Questions',
       'Submission Type', 'Violations', 'Reason', 'Start Time', 'Submit Time',
     ];
     const lines = [header.join(',')];
 
     for (const a of q.attemptsByQuiz.all(quizId)) {
       lines.push([
-        a.student_id, a.name, a.status, a.score, a.correct_count, a.total_questions,
+        a.student_id, a.name, a.status,
+        a.earned_marks, a.total_marks, a.score,
+        a.correct_count, a.total_questions,
         a.submission_type, a.violations, a.reason, a.start_time, a.submit_time,
       ].map(csvCell).join(','));
     }

@@ -595,3 +595,83 @@ td.num { font-variant-numeric: tabular-nums; }
 }
 
 @media print { .exam-bar, .submit-bar, .overlay, .toast { display: none !important; } }
+
+
+/* ------------------------------------------------------------------ *
+ * Per-question marks
+ *
+ * Questions default to one mark, so the editor field has to be present without
+ * competing with the question text for attention - it sits in the card's header
+ * strip, small, and is simply left alone on an ordinary paper.
+ * ------------------------------------------------------------------ */
+
+.q-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  margin-right: 10px;
+  font-size: .76rem;
+  color: var(--text-muted);
+}
+.q-marks label { margin: 0; font-size: .76rem; letter-spacing: .02em; }
+.q-marks input {
+  width: 74px;
+  padding: 5px 8px;
+  font-size: .84rem;
+  font-weight: 600;
+  text-align: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+.q-marks input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Running total while a paper is being written. */
+.marks-total {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 14px;
+  padding: 6px 12px;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+}
+
+/* What a question is worth, on the student's paper. Only emphasised above one
+   mark: badging every ordinary question would be noise on a phone screen. */
+.q-worth {
+  display: inline-block;
+  margin-left: 9px;
+  padding: 1px 8px;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+.q-worth.heavy {
+  background: #eef3ff;
+  border-color: #b9cbf5;
+  color: #23417f;
+}
+
+/* Marks awarded per question on the reviewed answer sheet. */
+.q-award {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: .74rem;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}

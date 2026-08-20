@@ -50,8 +50,11 @@
         codeInput.required = true;
       }
       titleEl.textContent = data.title;
+      var total = Number(data.totalMarks || data.questionCount);
+      var totalText = total === Math.round(total) ? total : Math.round(total * 100) / 100;
       metaEl.textContent = data.questionCount + ' question'
-        + (data.questionCount === 1 ? '' : 's') + ' · ' + data.durationMinutes
+        + (data.questionCount === 1 ? '' : 's') + ' · ' + totalText + ' mark'
+        + (total === 1 ? '' : 's') + ' · ' + data.durationMinutes
         + ' minute time limit · one attempt';
       submitBtn.disabled = false;
     }).catch(function (err) {

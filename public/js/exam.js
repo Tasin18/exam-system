@@ -116,6 +116,16 @@
       var idx = document.createElement('div');
       idx.className = 'q-index';
       idx.textContent = 'Question ' + (index + 1) + ' of ' + questions.length;
+
+      // Students are entitled to know what a question is worth before deciding
+      // where to spend their time - a printed paper always says so.
+      var marks = Number(question.marks || 1);
+      var badge = document.createElement('span');
+      badge.className = 'q-worth' + (marks > 1 ? ' heavy' : '');
+      badge.textContent = (marks === Math.round(marks) ? marks : Math.round(marks * 100) / 100)
+        + (marks === 1 ? ' mark' : ' marks');
+      idx.appendChild(badge);
+
       card.appendChild(idx);
 
       var text = document.createElement('div');

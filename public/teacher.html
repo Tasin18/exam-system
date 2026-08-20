@@ -121,8 +121,8 @@
           <div class="table-scroll">
             <table>
               <thead>
-                <tr><th>ID</th><th>Title</th><th>Questions</th><th>Duration</th><th>Order</th>
-                    <th>Status</th><th></th></tr>
+                <tr><th>ID</th><th>Title</th><th>Questions</th><th>Marks</th>
+                    <th>Duration</th><th>Order</th><th>Status</th><th></th></tr>
               </thead>
               <tbody id="quizRows"></tbody>
             </table>
@@ -175,6 +175,7 @@
 
           <div class="row" style="margin-top:14px">
             <button class="btn secondary" id="addQuestion" style="flex:0 0 auto">+ Add Question</button>
+            <span class="marks-total" id="marksTotal">No questions yet.</span>
             <span style="flex:1"></span>
             <button class="btn" id="saveQuiz" style="flex:0 0 auto">Save Quiz</button>
           </div>
@@ -201,7 +202,8 @@
           <div class="table-scroll">
             <table>
               <thead>
-                <tr><th>Student ID</th><th>Name</th><th>Status</th><th>Score</th><th>Correct</th>
+                <tr><th>Student ID</th><th>Name</th><th>Status</th><th>Marks</th>
+                    <th>Score</th><th>Correct</th>
                     <th>Type</th><th>Flags</th><th>Submitted</th><th></th></tr>
               </thead>
               <tbody id="resultRows"></tbody>

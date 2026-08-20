@@ -31,6 +31,17 @@
 
   var LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
+  /** 2 -> "2", 2.5 -> "2.5". Whole marks should not read as "2.00". */
+  function fmtMarks(value) {
+    var n = Number(value || 0);
+    return n === Math.round(n) ? String(n) : String(Math.round(n * 100) / 100);
+  }
+
+  /** "1 mark" / "2 marks", for labels that read as prose. */
+  function marksLabel(value) {
+    return fmtMarks(value) + (Number(value) === 1 ? ' mark' : ' marks');
+  }
+
   // 'admin' or 'teacher', declared by the page that loaded this script.
   var ROLE = document.body.getAttribute('data-role') || 'admin';
   var IS_ADMIN = ROLE === 'admin';
@@ -200,6 +211,7 @@
 
     $('monitorTitle').textContent = snapshot.quiz.title;
     $('monitorHint').textContent = snapshot.questionCount + ' questions · '
+      + marksLabel(snapshot.totalMarks) + ' · '
       + snapshot.quiz.duration_minutes + ' min · '
       + (snapshot.quiz.is_active ? 'ACTIVE — students can log in' : 'inactive');
 
@@ -353,6 +365,7 @@
         + '<td><strong>' + esc(q.title) + '</strong></td>'
         + owner
         + '<td class="num">' + q.question_count + '</td>'
+        + '<td class="num">' + fmtMarks(q.total_marks) + '</td>'
         + '<td class="num">' + q.duration_minutes + ' min</td>'
         + '<td>' + (q.shuffle_questions
             ? '<span class="pill IN_PROGRESS">shuffled</span>'
@@ -416,6 +429,9 @@
   function questionEditorHtml(index, question) {
     var options = question ? question.options : ['', '', '', ''];
     var correct = question ? question.correct_option : 0;
+    // 1 unless this question says otherwise, so a paper of ordinary questions
+    // needs no attention paid to this field at all.
+    var marks = question && question.marks !== undefined ? question.marks : 1;
 
     var optionRows = options.map(function (option, optIndex) {
       return '<div class="opt-row">'
@@ -432,6 +448,11 @@
 
     return '<div class="q-editor" data-index="' + index + '">'
       + '<header><strong>Question ' + (index + 1) + '</strong>'
+      + '<span class="q-marks">'
+        + '<label for="marks-' + index + '">Marks</label>'
+        + '<input type="number" id="marks-' + index + '" class="q-marks-input" '
+          + 'min="0.5" max="1000" step="0.5" value="' + esc(fmtMarks(marks)) + '">'
+      + '</span>'
       + '<button class="btn small secondary" data-act="remove-question">Remove</button></header>'
       + '<div class="field"><textarea class="q-text-input" maxlength="1000" '
         + 'placeholder="Type the question…">' + esc(question ? question.question_text : '')
@@ -450,7 +471,8 @@
         + '</div>'
       + '</div>'
       + optionRows
-      + '<p class="hint">Select the radio button beside the correct option.</p>'
+      + '<p class="hint">Select the radio button beside the correct option. '
+        + 'Marks default to 1 &mdash; raise it for a question that is worth more.</p>'
       + '</div>';
   }
 
@@ -575,6 +597,7 @@
       $('quizAccessCode').value = '';
       $('quizShuffle').checked = true;
       $('questionList').innerHTML = questionEditorHtml(0, null);
+      renderMarksTotal();
       $('editorPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
@@ -589,6 +612,7 @@
       $('questionList').innerHTML = data.questions.length
         ? data.questions.map(function (q, i) { return questionEditorHtml(i, q); }).join('')
         : questionEditorHtml(0, null);
+      renderMarksTotal();
       $('editorPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }).catch(guard);
   }
@@ -604,6 +628,7 @@
   on('addQuestion', 'click', function () {
     var index = $('questionList').children.length;
     $('questionList').insertAdjacentHTML('beforeend', questionEditorHtml(index, null));
+    renderMarksTotal();
   });
 
   on('questionList', 'click', function (e) {
@@ -619,6 +644,7 @@
       }
       node.remove();
       renumberQuestions();
+      renderMarksTotal();
     }
 
     if (act === 'pick-image') node.querySelector('.q-image-input').click();
@@ -642,10 +668,40 @@
     });
   });
 
+  // 'input', not 'change': the total should follow the keystrokes, otherwise it
+  // lags behind what the examiner is looking at until they click away.
+  on('questionList', 'input', function (e) {
+    if (e.target.classList.contains('q-marks-input')) renderMarksTotal();
+  });
+
   function showEditorError(message) {
     $('editorError').hidden = false;
     $('editorError').textContent = message;
     $('editorError').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  /**
+   * Keeps the paper's total in view while it is being written.
+   *
+   * Worth the few lines: with weighted questions the total stops being the
+   * question count, and an examiner who wanted a paper out of 50 has no other
+   * way to notice they have built one out of 47.
+   */
+  function renderMarksTotal() {
+    var readout = $('marksTotal');
+    if (!readout) return;
+    var fields = $('questionList').querySelectorAll('.q-marks-input');
+    var total = 0;
+    var count = 0;
+    Array.prototype.forEach.call(fields, function (field) {
+      var value = Number(field.value);
+      if (value > 0) total += value;
+      count += 1;
+    });
+    readout.textContent = count
+      ? count + ' question' + (count === 1 ? '' : 's') + ' \u00b7 '
+        + marksLabel(Math.round(total * 100) / 100) + ' total'
+      : 'No questions yet.';
   }
 
   function collectQuiz() {
@@ -662,6 +718,11 @@
       var checked = node.querySelector('input[type="radio"]:checked');
       var preview = node.querySelector('.q-image-preview');
       var image = preview.getAttribute('src') || null;
+      var marksField = node.querySelector('.q-marks-input');
+      var marks = marksField ? Number(marksField.value) : 1;
+      if (!marks || marks <= 0) {
+        throw new Error('Question ' + (index + 1) + ': marks must be greater than zero.');
+      }
 
       if (!text) throw new Error('Question ' + (index + 1) + ': enter the question text.');
       if (options.some(function (o) { return !o; })) {
@@ -673,6 +734,7 @@
         question_text: text,
         options: options,
         image: image,
+        marks: marks,
         correct_option: Number(checked.value),
       };
     });
@@ -739,10 +801,14 @@
 
       var rows = results.map(function (r) {
         var display = r.status === 'TERMINATED' ? 'AUTO_TERMINATED' : r.status;
+        var marks = r.status === 'IN_PROGRESS'
+          ? '—'
+          : fmtMarks(r.earnedMarks) + '/' + fmtMarks(r.totalMarks);
         return '<tr>'
           + '<td><strong>' + esc(r.studentId) + '</strong></td>'
           + '<td>' + esc(r.name) + '</td>'
           + '<td><span class="pill ' + display + '">' + display.replace(/_/g, ' ') + '</span></td>'
+          + '<td class="num"><strong>' + marks + '</strong></td>'
           + '<td class="num">' + (r.status === 'IN_PROGRESS' ? '—' : r.score + '%') + '</td>'
           + '<td class="num">' + r.correct + '/' + r.total + '</td>'
           + '<td>' + esc(r.submissionType || '—') + '</td>'
@@ -807,6 +873,8 @@
 
     var c = sheet.counts;
     $('sheetStats').innerHTML = ''
+      + statTile('Marks', fmtMarks(c.earnedMarks) + '/' + fmtMarks(c.totalMarks),
+          sheet.attempt.status === 'TERMINATED' ? 'danger' : 'accent')
       + statTile('Score', sheet.attempt.score + '%', sheet.attempt.status === 'TERMINATED' ? 'danger' : 'accent')
       + statTile('Correct', c.correct + '/' + c.total, 'ok')
       + statTile('Wrong', String(c.wrong), c.wrong ? 'danger' : '')
@@ -829,6 +897,8 @@
       if (item.shownAs !== item.authoredAs) {
         numbering += ' <small>[examiner Q' + item.authoredAs + ']</small>';
       }
+      numbering += ' <span class="q-award">' + fmtMarks(item.awarded)
+        + '/' + fmtMarks(item.marks) + '</span>';
 
       var img = item.has_image
         ? '<img class="q-img" alt="Question image" src="/api/quiz/image/' + item.question_id
